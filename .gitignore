@@ -1,0 +1,48 @@
+/.phpunit.cache
+/node_modules
+/public/build
+/public/hot
+/public/storage
+/storage/*.key
+/vendor
+.env
+.env.backup
+.env.production
+.phpunit.result.cache
+Homestead.json
+Homestead.yaml
+auth.json
+npm-debug.log
+yarn-error.log
+/.fleet
+/.idea
+/.vscode
+
+# AI Models
+*.pt
+*.pth
+*.onnx
+*.weights
+
+# Dataset
+datasets/
+data/
+runs/
+
+# Archives
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+
+# Videos & Images (nếu không cần đưa lên Git)
+*.mp4
+*.avi
+*.mov
+
+# Logs
+*.log
+
+/public/uploads/vehicles/*
+!/public/uploads/vehicles/.gitkeep
