@@ -90,8 +90,7 @@
 
                         <div id="exit-result" class="mt-3" style="display: none;">
                             <div class="alert mb-0 shadow-sm p-2" id="exit-alert-box">
-                                <h6 class="mb-1 fw-bold fs-6" id="exit-message"></h6>
-                                <small class="text-muted" id="exit-timer-container" style="display: none; font-size: 11px;">Mặc định sau <span id="exit-timer" class="fw-bold">10</span> giây...</small>
+                                <h6 class="mb-0 fw-bold fs-6" id="exit-message"></h6>
                             </div>
                         </div>
                     </div>
@@ -101,14 +100,14 @@
 
         <!-- Cột 3 (col-4): Ảnh Xe Vào & Xe Ra chồng lên nhau -->
         <div class="col-12 col-xl-4">
-            <div class="card h-100 border-dark shadow-sm" id="comparison-section">
+            <div class="card border-dark shadow-sm" id="comparison-section">
                 <div class="card-header bg-dark text-white p-3">
                     <div class="d-flex align-items-center justify-content-between mb-2">
                         <h5 class="mb-0 text-white fw-bold fs-6"><i class="material-icons-outlined align-middle me-1">compare</i> Đối chiếu Hình ảnh</h5>
                     </div>
                     <span class="badge bg-warning text-dark w-100 py-2 d-block text-truncate" id="comp-status-badge">Đang chờ nhận diện xe ra...</span>
                 </div>
-                <div class="card-body p-3 d-flex flex-column justify-content-between">
+                <div class="card-body p-3">
                     <div class="d-flex flex-column gap-3">
                         <!-- Khung Ảnh Xe Vào -->
                         <div class="border rounded p-2 bg-light shadow-sm">
@@ -116,7 +115,7 @@
                                 <span class="badge bg-primary px-2 py-1">Ảnh Xe Vào</span>
                                 <span class="small fw-semibold">BSX: <strong id="comp-entry-plate" class="text-primary fs-6">-</strong></span>
                             </div>
-                            <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 160px;">
+                            <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 140px;">
                                 <img id="comp-entry-img" src="" alt="Ảnh xe vào" style="max-height: 100%; max-width: 100%; object-fit: contain; display: none;">
                                 <span id="comp-entry-empty" class="text-muted text-center" style="font-size: 12px;"><i class="material-icons-outlined fs-3">image_not_supported</i><br>Chưa có ảnh vào</span>
                             </div>
@@ -128,24 +127,27 @@
                                 <span class="badge bg-danger px-2 py-1">Ảnh Xe Ra</span>
                                 <span class="small fw-semibold">BSX: <strong id="comp-exit-plate" class="text-danger fs-6">-</strong></span>
                             </div>
-                            <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 160px;">
+                            <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 140px;">
                                 <img id="comp-exit-img" src="" alt="Ảnh xe ra" style="max-height: 100%; max-width: 100%; object-fit: contain; display: none;">
                                 <span id="comp-exit-empty" class="text-muted text-center" style="font-size: 12px;"><i class="material-icons-outlined fs-3">image_not_supported</i><br>Chưa có ảnh ra</span>
                             </div>
                         </div>
                     </div>
 
-                    <!-- 2 Nút Hợp Lệ / Không Hợp Lệ -->
-                    <div class="mt-3 pt-2 border-top" id="validation-buttons" style="display: none;">
-                        <p class="text-center text-muted mb-2" style="font-size: 12px;">Đối chiếu bằng mắt và chọn:</p>
+                    <!-- Nút dưới ảnh đối chiếu — hiện cả khi khớp lẫn không khớp -->
+                    <div class="mt-3 pt-3 border-top" id="validation-buttons" style="display: none;">
+                        <p class="text-center text-muted mb-2 fw-semibold" style="font-size: 13px;">Đối chiếu bằng mắt rồi chọn:</p>
                         <div class="d-flex gap-2">
-                            <button type="button" id="btn-valid" class="btn btn-success flex-grow-1 fw-bold shadow-sm py-2">
+                            <button type="button" id="btn-valid" class="btn btn-success flex-fill fw-bold shadow-sm py-2">
                                 <i class="material-icons-outlined align-middle me-1">check_circle</i> Hợp lệ
                             </button>
-                            <button type="button" id="btn-invalid" class="btn btn-danger flex-grow-1 fw-bold shadow-sm py-2">
+                            <button type="button" id="btn-invalid" class="btn btn-outline-danger flex-fill fw-bold shadow-sm py-2">
                                 <i class="material-icons-outlined align-middle me-1">cancel</i> Không hợp lệ
                             </button>
                         </div>
+                        <small class="text-muted d-block text-center mt-2" style="font-size: 11px;">
+                            Hợp lệ → “Xe vào đã ra”. Không hợp lệ → giữ “Xe vào chưa ra”.
+                        </small>
                     </div>
                 </div>
             </div>
@@ -261,20 +263,20 @@ $(document).ready(function() {
     // Reset Camera Xe Ra và 2 Khung đối chiếu về default
     function resetExitAndComparison() {
         if (exitTimerInterval) clearInterval(exitTimerInterval);
+        exitTimerInterval = null;
         $('#exit-file, #exit-code, #btn-exit-recognize').prop('disabled', false);
         $('#exit-file').val('');
         $('#exit-code').val('');
         $('#exit-camera').hide().attr('src', '');
         $('#exit-placeholder').show();
-        $('#exit-result').fadeOut();
-        $('#exit-timer-container').hide();
+        $('#exit-result').hide();
 
         // Reset Khung đối chiếu
         $('#comp-entry-img, #comp-exit-img').hide().attr('src', '');
         $('#comp-entry-empty, #comp-exit-empty').show();
         $('#comp-entry-plate, #comp-exit-plate').text('-');
-        $('#comp-status-badge').removeClass('bg-success bg-danger').addClass('bg-warning text-dark').text('Đang chờ nhận diện xe ra...');
-        $('#validation-buttons').slideUp();
+        $('#comp-status-badge').removeClass('bg-success bg-danger text-white').addClass('bg-warning text-dark').text('Đang chờ nhận diện xe ra...');
+        $('#validation-buttons').hide();
         currentLogId = null;
     }
 
@@ -398,7 +400,6 @@ $(document).ready(function() {
 
         let btn = $(this);
         btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span> Đang đối chiếu AI...');
-        $('#exit-timer-container').hide();
 
         $.ajax({
             url: '{{ route("api.checkout_exit") }}',
@@ -407,62 +408,48 @@ $(document).ready(function() {
             processData: false,
             contentType: false,
             success: function(response) {
-                $('#exit-result').fadeIn();
                 let alertBox = $('#exit-alert-box');
 
                 if (response.success) {
                     currentLogId = response.log_id;
 
-                    // Hiển thị khung ảnh xe vào & xe ra bên dưới
+                    // Hiển thị khung ảnh xe vào & xe ra để bảo vệ đối chiếu
                     if (response.entry_image) {
                         $('#comp-entry-empty').hide();
                         $('#comp-entry-img').attr('src', response.entry_image).show();
                     }
-                    $('#comp-entry-plate').text(response.entry_plate);
+                    $('#comp-entry-plate').text(response.entry_plate || '-');
 
                     if (response.exit_image) {
                         $('#comp-exit-empty').hide();
                         $('#comp-exit-img').attr('src', response.exit_image).show();
                     }
-                    $('#comp-exit-plate').text(response.exit_plate);
+                    $('#comp-exit-plate').text(response.exit_plate || '-');
 
-                    if (response.match === true) {
-                        // Trùng khớp -> vô hiệu hóa ô tải file, mã code và nút nhận diện ra
-                        $('#exit-file, #exit-code, #btn-exit-recognize').prop('disabled', true);
+                    // Khóa form; hiện kết quả + nút Hợp lệ / Không hợp lệ (cả khi khớp lẫn khi lệch)
+                    $('#exit-file, #exit-code, #btn-exit-recognize').prop('disabled', true);
+
+                    if (response.match === true || response.match === 1 || response.match === 'true') {
                         alertBox.removeClass('alert-danger alert-info').addClass('alert-success');
                         $('#exit-message').html('<i class="material-icons-outlined align-middle me-1">check_circle</i> ' + response.message);
-                        $('#comp-status-badge').removeClass('bg-warning bg-danger').addClass('bg-success text-white').text('BSX Trùng khớp (Đã checkout)');
-                        $('#validation-buttons').slideUp();
-                        fetchRecentLogs();
-
-                        // 3 khung về default trong 10s
-                        $('#exit-timer-container').show();
-                        let seconds = 10;
-                        $('#exit-timer').text(seconds);
-                        exitTimerInterval = setInterval(function() {
-                            seconds--;
-                            $('#exit-timer').text(seconds);
-                            if (seconds <= 0) {
-                                clearInterval(exitTimerInterval);
-                                resetExitAndComparison();
-                            }
-                        }, 1000);
+                        $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white').text('BSX trùng khớp — xác nhận cho ra?');
                     } else {
-                        // Không trùng khớp
                         alertBox.removeClass('alert-success alert-info').addClass('alert-danger');
                         $('#exit-message').html('<i class="material-icons-outlined align-middle me-1">warning</i> ' + response.message);
-                        $('#exit-timer-container').hide(); // Vẫn giữ nguyên đấy không reset
-                        $('#comp-status-badge').removeClass('bg-warning bg-success').addClass('bg-danger text-white').text('BSX Không trùng khớp! Cần kiểm tra');
-                        $('#validation-buttons').slideDown();
+                        $('#comp-status-badge').removeClass('bg-warning bg-success text-dark').addClass('bg-danger text-white').text('BSX không trùng — vẫn cần xác nhận');
                     }
+
+                    // Hiện kết quả + nút Hợp lệ/Không hợp lệ dưới khung đối chiếu
+                    $('#exit-result').show();
+                    $('#validation-buttons').show();
                 } else {
                     alertBox.removeClass('alert-success alert-info').addClass('alert-danger');
-                    $('#exit-message').text(response.message);
-                    $('#exit-timer-container').hide();
+                    $('#exit-message').text(response.message || 'Có lỗi xảy ra');
+                    $('#exit-result').show();
+                    $('#validation-buttons').hide();
                 }
             },
             error: function(xhr) {
-                $('#exit-timer-container').hide();
                 let msg = 'Lỗi kết nối máy chủ (HTTP ' + xhr.status + ').';
                 if (xhr.responseJSON && xhr.responseJSON.message) {
                     msg += '\nChi tiết: ' + xhr.responseJSON.message;

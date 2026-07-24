@@ -3,15 +3,19 @@ import os
 import json
 import site
 import io
+import re
+import numpy as np
 
-# Ensure UTF-8 output on Windows
+_plate_model = None
+_read_model = None
+_easyocr_reader = None
+
 try:
     if sys.stdout.encoding != 'utf-8':
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 except Exception:
     pass
 
-# Tự động nạp thư viện từ Roaming site-packages (khi chạy qua XAMPP Apache)
 try:
     user_site = site.getusersitepackages()
     if user_site and os.path.exists(user_site) and user_site not in sys.path:
@@ -24,6 +28,415 @@ for py_ver in ["314", "313", "312", "311", "310", "39", "38"]:
     if os.path.exists(admin_path) and admin_path not in sys.path:
         sys.path.append(admin_path)
 
+# Điểm đủ tốt + format hợp lệ → trả ngay, bỏ EasyOCR
+GOOD_SCORE = 160
+
+
+def _bootstrap_cv_yolo():
+    import cv2
+    from ultralytics import YOLO
+    return cv2, YOLO
+
+
+def load_models(base_dir=None):
+    global _plate_model, _read_model
+    cv2, YOLO = _bootstrap_cv_yolo()
+
+    if base_dir is None:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    if _plate_model is None:
+        best_pt = os.path.join(base_dir, "best.pt")
+        if not os.path.exists(best_pt):
+            raise FileNotFoundError("Model file best.pt not found")
+        _plate_model = YOLO(best_pt)
+
+    if _read_model is None:
+        bestread_pt = os.path.join(base_dir, "bestRead.pt")
+        if not os.path.exists(bestread_pt):
+            bestread_pt = os.path.join(base_dir, "bestread.pt")
+        if os.path.exists(bestread_pt):
+            _read_model = YOLO(bestread_pt)
+        else:
+            _read_model = False
+
+    return _plate_model, (_read_model if _read_model is not False else None)
+
+
+def load_easyocr_reader():
+    global _easyocr_reader
+    if _easyocr_reader is not None:
+        return _easyocr_reader if _easyocr_reader is not False else None
+    try:
+        import easyocr
+        _easyocr_reader = easyocr.Reader(['en'], gpu=False, verbose=False)
+    except Exception:
+        _easyocr_reader = False
+        return None
+    return _easyocr_reader
+
+
+def recognize_plate(img_path):
+    """Nhận diện biển số từ đường dẫn ảnh. Trả dict {success, plate|error}."""
+    cv2, _YOLO = _bootstrap_cv_yolo()
+    plate_model, read_model = load_models()
+
+    img = cv2.imread(img_path)
+    if img is None:
+        return {"success": False, "error": "Could not read image"}
+
+    h_img, w_img = img.shape[:2]
+
+    detect_img = img
+    detect_scale = 1.0
+    max_side = max(h_img, w_img)
+    if max_side > 1280:
+        detect_scale = 1280.0 / max_side
+        detect_img = cv2.resize(
+            img,
+            (int(w_img * detect_scale), int(h_img * detect_scale)),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    def rotate_image(image, angle_degrees):
+        if abs(angle_degrees) < 0.5:
+            return image
+        center = (image.shape[1] / 2.0, image.shape[0] / 2.0)
+        matrix = cv2.getRotationMatrix2D(center, angle_degrees, 1.0)
+        return cv2.warpAffine(
+            image, matrix, (image.shape[1], image.shape[0]),
+            flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE,
+        )
+
+    def unique_nonempty(values):
+        seen = set()
+        ordered = []
+        for value in values:
+            if value and value not in seen:
+                seen.add(value)
+                ordered.append(value)
+        return ordered
+
+    def compact_alnum(text):
+        return re.sub(r'[^A-Z0-9]', '', text.upper())
+
+    def format_plate(compact):
+        compact = compact_alnum(compact)
+        m = re.match(r'^(\d{2})([A-Z][A-Z0-9])(\d{4,5})$', compact)
+        if m:
+            return f"{m.group(1)}{m.group(2)}-{m.group(3)}"
+        m = re.match(r'^(\d{2})([A-Z])(\d{4,5})$', compact)
+        if m:
+            return f"{m.group(1)}{m.group(2)}-{m.group(3)}"
+        return compact
+
+    def is_valid_plate(text):
+        compact = compact_alnum(text)
+        return bool(
+            re.match(r'^\d{2}[A-Z][A-Z0-9]\d{4,5}$', compact)
+            or re.match(r'^\d{2}[A-Z]\d{4,5}$', compact)
+        )
+
+    def score_plate_text(text, raw_hint='', mean_conf=0.0):
+        compact = compact_alnum(text)
+        if not compact:
+            return (-1, 0, 0, 0, 0.0)
+
+        score = 0
+        if re.match(r'^\d{2}[A-Z][A-Z0-9]\d{4,5}$', compact):
+            score += 140
+        elif re.match(r'^\d{2}[A-Z]\d{4,5}$', compact):
+            score += 120
+        elif re.match(r'^\d{2}[A-Z]{1,2}\d{4,5}$', compact):
+            score += 90
+        elif len(compact) >= 7:
+            score += 30
+
+        digits = sum(ch.isdigit() for ch in compact)
+        letters = sum(ch.isalpha() for ch in compact)
+        score += digits * 4 + letters * 3
+        if len(compact) in (7, 8, 9):
+            score += 12
+
+        hint = compact_alnum(raw_hint)
+        if hint:
+            same = sum(1 for a, b in zip(compact, hint) if a == b)
+            score += same * 8
+            score -= abs(len(compact) - len(hint)) * 6
+
+        score += int(mean_conf * 40)
+        return (score, digits, letters, len(compact), mean_conf)
+
+    def normalize_plate_text(text, raw_hint=''):
+        text = re.sub(r'\s+', '', text.upper())
+        text = re.sub(r'[^A-Z0-9-]', '', text)
+        if not text:
+            return text
+
+        compact = text.replace('-', '')
+        digit_from_letter = {
+            'O': '0', 'Q': '0', 'D': '0', 'I': '1', 'L': '1',
+            'Z': '2', 'S': '5', 'B': '8', 'G': '6', 'T': '7',
+        }
+        letter_from_digit = {
+            '0': 'O', '1': 'I', '2': 'Z', '4': 'A', '5': 'S',
+            '6': 'G', '8': 'B',
+        }
+
+        def coerce_digit(ch):
+            ch = ch.upper()
+            return ch if ch.isdigit() else digit_from_letter.get(ch, ch)
+
+        def coerce_letter(ch):
+            ch = ch.upper()
+            return ch if ch.isalpha() else letter_from_digit.get(ch, ch)
+
+        candidates = []
+
+        def try_build(variant):
+            for top_len, tail_len in ((3, 5), (3, 4), (4, 5), (4, 4)):
+                if len(variant) != top_len + tail_len:
+                    continue
+                top = variant[:top_len]
+                tail = variant[top_len:]
+                if top_len == 3:
+                    built = (
+                        coerce_digit(top[0]) + coerce_digit(top[1]) + coerce_letter(top[2])
+                        + ''.join(coerce_digit(ch) for ch in tail)
+                    )
+                    if re.match(r'^\d{2}[A-Z]\d{4,5}$', built):
+                        candidates.append(format_plate(built))
+                else:
+                    series2 = top[3].upper() if top[3].isalnum() else top[3]
+                    built = (
+                        coerce_digit(top[0]) + coerce_digit(top[1]) + coerce_letter(top[2])
+                        + series2 + ''.join(coerce_digit(ch) for ch in tail)
+                    )
+                    if re.match(r'^\d{2}[A-Z][A-Z0-9]\d{4,5}$', built):
+                        candidates.append(format_plate(built))
+
+        variants = [compact]
+        if len(compact) > 1:
+            variants.extend([compact[1:], compact[:-1]])
+        if len(compact) > 2:
+            variants.append(compact[1:-1])
+
+        for variant in unique_nonempty(variants):
+            try_build(variant)
+
+        already = format_plate(compact)
+        if re.match(r'^\d{2}[A-Z]{1,2}-\d{4,5}$', already):
+            candidates.insert(0, already)
+
+        candidates = unique_nonempty(candidates)
+        if not candidates:
+            return already or text
+
+        candidates.sort(key=lambda c: score_plate_text(c, raw_hint=raw_hint or text), reverse=True)
+        return candidates[0]
+
+    def extract_chars(image, thresh=0.2):
+        if read_model is None:
+            return []
+        # 640: đủ rõ để không nhầm A/4; inference ~0.1s trên crop
+        res = read_model(image, conf=thresh, verbose=False, imgsz=640)
+        chars = []
+        for c_box in res[0].boxes:
+            xy = c_box.xyxy[0].cpu().numpy()
+            cx1, cy1, cx2, cy2 = map(float, xy)
+            chars.append({
+                'label': str(read_model.names[int(c_box.cls[0])]),
+                'conf': float(c_box.conf[0]),
+                'xc': (cx1 + cx2) / 2.0,
+                'yc': (cy1 + cy2) / 2.0,
+            })
+        return chars
+
+    def nms_chars(chars, dist=12):
+        chars = sorted(chars, key=lambda c: c['conf'], reverse=True)
+        kept = []
+        for ch in chars:
+            if any(abs(ch['xc'] - k['xc']) < dist and abs(ch['yc'] - k['yc']) < dist for k in kept):
+                continue
+            kept.append(ch)
+        return kept
+
+    def assemble_char_sequence(chars):
+        if not chars:
+            return "", 0.0
+
+        mean_conf = float(np.mean([c['conf'] for c in chars]))
+        if len(chars) <= 3:
+            ordered = sorted(chars, key=lambda c: c['xc'])
+            return ''.join(c['label'] for c in ordered), mean_conf
+
+        xs = np.array([c['xc'] for c in chars], dtype=float)
+        ys = np.array([c['yc'] for c in chars], dtype=float)
+        y_span = float(ys.max() - ys.min())
+        x_span = max(float(xs.max() - xs.min()), 1.0)
+
+        if y_span < max(18.0, 0.18 * x_span) or len(chars) < 5:
+            ordered = sorted(chars, key=lambda c: c['xc'])
+            return ''.join(c['label'] for c in ordered), mean_conf
+
+        try:
+            slope, intercept = np.polyfit(xs, ys, 1)
+        except Exception:
+            slope, intercept = 0.0, float(np.mean(ys))
+
+        residuals = ys - (slope * xs + intercept)
+        order = np.argsort(residuals)
+        r_sorted = residuals[order]
+        gaps = [(float(r_sorted[i] - r_sorted[i - 1]), i) for i in range(1, len(r_sorted))]
+        if not gaps:
+            ordered = sorted(chars, key=lambda c: c['xc'])
+            return ''.join(c['label'] for c in ordered), mean_conf
+
+        gap, split_i = max(gaps, key=lambda item: item[0])
+        if gap < max(10.0, 0.12 * y_span) and len(chars) < 7:
+            ordered = sorted(chars, key=lambda c: c['xc'])
+            return ''.join(c['label'] for c in ordered), mean_conf
+
+        thresh = (r_sorted[split_i - 1] + r_sorted[split_i]) / 2.0
+        top = [c for c, r in zip(chars, residuals) if r <= thresh]
+        bot = [c for c, r in zip(chars, residuals) if r > thresh]
+        if not top or not bot:
+            ordered = sorted(chars, key=lambda c: c['xc'])
+            return ''.join(c['label'] for c in ordered), mean_conf
+
+        if np.mean([r for r in residuals if r <= thresh]) > np.mean([r for r in residuals if r > thresh]):
+            top, bot = bot, top
+
+        top = sorted(top, key=lambda c: c['xc'])
+        bot = sorted(bot, key=lambda c: c['xc'])
+        return f"{''.join(c['label'] for c in top)}-{''.join(c['label'] for c in bot)}", mean_conf
+
+    def try_recognize_image(image, conf=0.2):
+        chars = nms_chars(extract_chars(image, thresh=conf))
+        if len(chars) < 5:
+            return "", (-1, 0, 0, 0, 0.0)
+        raw, mean_conf = assemble_char_sequence(chars)
+        if not raw:
+            return "", (-1, 0, 0, 0, 0.0)
+        normalized = normalize_plate_text(raw, raw_hint=raw)
+        return normalized, score_plate_text(normalized, raw_hint=raw, mean_conf=mean_conf)
+
+    def is_good_result(text, score):
+        return is_valid_plate(text) and score[0] >= GOOD_SCORE and len(compact_alnum(text)) >= 7
+
+    def recognize_fast(crop):
+        best_text, best_score = try_recognize_image(crop, conf=0.2)
+        if is_good_result(best_text, best_score):
+            return best_text, best_score
+
+        if len(compact_alnum(best_text)) < 7:
+            text, score = try_recognize_image(crop, conf=0.12)
+            if score > best_score:
+                best_text, best_score = text, score
+            if is_good_result(best_text, best_score):
+                return best_text, best_score
+
+        for angle in (-8.0, 8.0):
+            text, score = try_recognize_image(rotate_image(crop, angle), conf=0.2)
+            if score > best_score:
+                best_text, best_score = text, score
+            if is_good_result(best_text, best_score):
+                return best_text, best_score
+
+        return best_text, best_score
+
+    def recognize_easyocr_fallback(crop):
+        reader = load_easyocr_reader()
+        if reader is None:
+            return "", (-1, 0, 0, 0, 0.0)
+
+        trial = crop
+        if max(crop.shape[:2]) < 400:
+            trial = cv2.resize(crop, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+
+        allow = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'
+        try:
+            raw_results = reader.readtext(trial, detail=1, paragraph=False, allowlist=allow)
+        except TypeError:
+            try:
+                raw_results = reader.readtext(trial, detail=1, paragraph=False)
+            except Exception:
+                return "", (-1, 0, 0, 0, 0.0)
+        except Exception:
+            return "", (-1, 0, 0, 0, 0.0)
+
+        detections = []
+        for item in raw_results or []:
+            if not item or len(item) < 2:
+                continue
+            text_value = re.sub(r'[^A-Za-z0-9-]', '', str(item[1]).strip().upper())
+            if not text_value:
+                continue
+            bbox = item[0]
+            if isinstance(bbox, (list, tuple)) and bbox:
+                cx = sum(p[0] for p in bbox) / len(bbox)
+                cy = sum(p[1] for p in bbox) / len(bbox)
+            else:
+                cx, cy = 0.0, 0.0
+            detections.append({'text': text_value, 'x': cx, 'y': cy})
+
+        if not detections:
+            return "", (-1, 0, 0, 0, 0.0)
+
+        ys = [d['y'] for d in detections]
+        if max(ys) - min(ys) > max(12.0, 0.2 * trial.shape[0]):
+            mid = (min(ys) + max(ys)) / 2.0
+            top = sorted([d for d in detections if d['y'] < mid], key=lambda d: d['x'])
+            bot = sorted([d for d in detections if d['y'] >= mid], key=lambda d: d['x'])
+            raw = f"{''.join(d['text'] for d in top)}-{''.join(d['text'] for d in bot)}"
+        else:
+            raw = ''.join(d['text'] for d in sorted(detections, key=lambda d: (d['y'], d['x'])))
+
+        normalized = normalize_plate_text(raw, raw_hint=raw)
+        return normalized, score_plate_text(normalized, raw_hint=raw, mean_conf=0.3)
+
+    plate_results = plate_model(detect_img, conf=0.25, verbose=False, imgsz=640)
+    boxes = plate_results[0].boxes
+
+    crop_img = img
+    best_box = None
+    if len(boxes) > 0:
+        best_box = max(boxes, key=lambda b: float(b.conf[0]))
+        xyxy = best_box.xyxy[0].cpu().numpy() / detect_scale
+        x1, y1, x2, y2 = map(int, xyxy)
+        x1 = max(0, x1 - 8)
+        y1 = max(0, y1 - 8)
+        x2 = min(w_img, x2 + 8)
+        y2 = min(h_img, y2 + 8)
+        if x2 > x1 and y2 > y1:
+            crop_img = img[y1:y2, x1:x2]
+
+    final_plate, final_score = recognize_fast(crop_img)
+
+    if (not is_valid_plate(final_plate)) and best_box is not None:
+        xyxy = best_box.xyxy[0].cpu().numpy() / detect_scale
+        x1, y1, x2, y2 = map(int, xyxy)
+        x1 = max(0, x1 - 16)
+        y1 = max(0, y1 - 16)
+        x2 = min(w_img, x2 + 16)
+        y2 = min(h_img, y2 + 16)
+        if x2 > x1 and y2 > y1:
+            wider = img[y1:y2, x1:x2]
+            wider_plate, wider_score = recognize_fast(wider)
+            if wider_score > final_score:
+                final_plate, final_score = wider_plate, wider_score
+
+    if not is_valid_plate(final_plate):
+        easy_plate, easy_score = recognize_easyocr_fallback(crop_img)
+        if easy_score > final_score:
+            final_plate, final_score = easy_plate, easy_score
+
+    if not final_plate:
+        return {"success": False, "error": "Không đọc được chuỗi biển số từ ảnh"}
+
+    return {"success": True, "plate": final_plate}
+
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({"success": False, "error": "No image path provided"}, ensure_ascii=True))
@@ -35,146 +448,11 @@ def main():
         return
 
     try:
-        import cv2
-        from ultralytics import YOLO
-    except ImportError as e:
-        print(json.dumps({"success": False, "error": f"Import error: {str(e)}"}, ensure_ascii=True))
-        return
-
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    best_pt = os.path.join(base_dir, "best.pt")
-    bestread_pt = os.path.join(base_dir, "bestRead.pt")
-    if not os.path.exists(bestread_pt):
-        bestread_pt = os.path.join(base_dir, "bestread.pt")
-
-    if not os.path.exists(best_pt) or not os.path.exists(bestread_pt):
-        print(json.dumps({"success": False, "error": "Model files best.pt or bestRead.pt not found"}, ensure_ascii=True))
-        return
-
-    try:
-        # Load models
-        plate_model = YOLO(best_pt)
-        read_model = YOLO(bestread_pt)
-
-        # Load image
-        img = cv2.imread(img_path)
-        if img is None:
-            print(json.dumps({"success": False, "error": "Could not read image"}, ensure_ascii=True))
-            return
-
-        h_img, w_img, _ = img.shape
-
-        # Detect license plate box
-        # Detect license plate box với ngưỡng conf thấp (0.15)
-        plate_results = plate_model(img, conf=0.15, verbose=False)
-        boxes = plate_results[0].boxes
-
-        crop_img = img
-        best_box = None
-        if len(boxes) > 0:
-            max_conf = -1
-            for box in boxes:
-                conf = float(box.conf[0])
-                if conf > max_conf:
-                    max_conf = conf
-                    best_box = box
-
-            if best_box is not None:
-                xyxy = best_box.xyxy[0].cpu().numpy()
-                x1, y1, x2, y2 = map(int, xyxy)
-                x1 = max(0, x1 - 5)
-                y1 = max(0, y1 - 5)
-                x2 = min(w_img, x2 + 5)
-                y2 = min(h_img, y2 + 5)
-                if x2 > x1 and y2 > y1:
-                    crop_img = img[y1:y2, x1:x2]
-
-        h_crop, w_crop, _ = crop_img.shape
-
-        def extract_chars(image, thresh):
-            # CỰC KỲ QUAN TRỌNG: Truyền trực tiếp conf=thresh vào hàm YOLO để không bị lọc mất ở ngưỡng mặc định 0.25
-            res = read_model(image, conf=thresh, verbose=False)
-            c_boxes = res[0].boxes
-            res_chars = []
-            for c_box in c_boxes:
-                xy = c_box.xyxy[0].cpu().numpy()
-                cx1, cy1, cx2, cy2 = map(float, xy)
-                conf = float(c_box.conf[0])
-                cls_id = int(c_box.cls[0])
-                label = str(read_model.names[cls_id])
-                y_center = (cy1 + cy2) / 2.0
-                res_chars.append({
-                    'x1': cx1,
-                    'y_center': y_center,
-                    'label': label
-                })
-            return res_chars
-
-        # Detect characters với ngưỡng tự động thích nghi
-        chars = extract_chars(crop_img, 0.25)
-        if not chars or len(chars) < 3:
-            chars_low = extract_chars(crop_img, 0.10)
-            if len(chars_low) > len(chars):
-                chars = chars_low
-
-        if not chars or len(chars) < 3:
-            chars_super_low = extract_chars(crop_img, 0.05)
-            if len(chars_super_low) > len(chars):
-                chars = chars_super_low
-
-        if not chars or len(chars) < 3:
-            # Thử crop rộng hơn (padding 15px)
-            if best_box is not None:
-                xyxy = best_box.xyxy[0].cpu().numpy()
-                x1, y1, x2, y2 = map(int, xyxy)
-                x1 = max(0, x1 - 15)
-                y1 = max(0, y1 - 15)
-                x2 = min(w_img, x2 + 15)
-                y2 = min(h_img, y2 + 15)
-                if x2 > x1 and y2 > y1:
-                    crop_wider = img[y1:y2, x1:x2]
-                    chars_wider = extract_chars(crop_wider, 0.08)
-                    if len(chars_wider) > len(chars):
-                        chars = chars_wider
-                        h_crop, w_crop, _ = crop_wider.shape
-
-        if not chars or len(chars) < 3:
-            # Cuối cùng thử trên toàn bộ ảnh gốc (uncropped)
-            chars_full = extract_chars(img, 0.08)
-            if len(chars_full) > len(chars):
-                chars = chars_full
-                h_crop = h_img
-
-        if not chars:
-            print(json.dumps({"success": False, "error": "Không đọc được ký tự biển số từ ảnh (mô hình AI bestRead.pt chưa nhận diện được ký tự nào trên bức ảnh này)"}, ensure_ascii=True))
-            return
-
-        # Sort / Group into lines
-        y_centers = [c['y_center'] for c in chars]
-        min_y = min(y_centers)
-        max_y = max(y_centers)
-
-        # Check if 2 lines (difference in y_center > 25% of height)
-        if (max_y - min_y) > (0.28 * h_crop):
-            mid_y = (min_y + max_y) / 2.0
-            line1 = [c for c in chars if c['y_center'] < mid_y]
-            line2 = [c for c in chars if c['y_center'] >= mid_y]
-            line1.sort(key=lambda x: x['x1'])
-            line2.sort(key=lambda x: x['x1'])
-            str1 = "".join([c['label'] for c in line1])
-            str2 = "".join([c['label'] for c in line2])
-            if str1 and str2:
-                final_plate = f"{str1}-{str2}"
-            else:
-                final_plate = str1 + str2
-        else:
-            chars.sort(key=lambda x: x['x1'])
-            final_plate = "".join([c['label'] for c in chars])
-
-        # Clean plate text if needed
-        print(json.dumps({"success": True, "plate": final_plate}, ensure_ascii=True))
+        result = recognize_plate(img_path)
+        print(json.dumps(result, ensure_ascii=True))
     except Exception as e:
         print(json.dumps({"success": False, "error": str(e)}, ensure_ascii=True))
+
 
 if __name__ == "__main__":
     main()

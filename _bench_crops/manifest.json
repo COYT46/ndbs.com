@@ -1,0 +1,67 @@
+[
+  {
+    "image": "public/uploads/vehicles/entry_1784804876_6a61f60c731bb.jpg",
+    "gt": "29AF-82853",
+    "crop": "C:\\xampp\\htdocs\\ndbs.com\\_bench_crops\\entry_1784804876_6a61f60c731bb_crop.jpg"
+  },
+  {
+    "image": "public/uploads/vehicles/exit_1784804905_6a61f6295f7cb.jpg",
+    "gt": "29AF-82853",
+    "crop": "C:\\xampp\\htdocs\\ndbs.com\\_bench_crops\\exit_1784804905_6a61f6295f7cb_crop.jpg"
+  },
+  {
+    "image": "public/uploads/vehicles/entry_1784804425_6a61f449858f2.jpg",
+    "gt": "29K1-02536",
+    "crop": "C:\\xampp\\htdocs\\ndbs.com\\_bench_crops\\entry_1784804425_6a61f449858f2_crop.jpg"
+  },
+  {
+    "image": "public/uploads/vehicles/exit_1784804825_6a61f5d905705.jpg",
+    "gt": "29K1-02536",
+    "crop": "C:\\xampp\\htdocs\\ndbs.com\\_bench_crops\\exit_1784804825_6a61f5d905705_crop.jpg"
+  },
+  {
+    "image": "public/uploads/vehicles/entry_1784804106_6a61f30a3bd7e.jpg",
+    "gt": "29S6-61468",
+    "crop": "C:\\xampp\\htdocs\\ndbs.com\\_bench_crops\\entry_1784804106_6a61f30a3bd7e_crop.jpg"
+  },
+  {
+    "image": "public/uploads/vehicles/exit_1784804118_6a61f3164f937.jpg",
+    "gt": "29S6-61468",
+    "crop": "C:\\xampp\\htdocs\\ndbs.com\\_bench_crops\\exit_1784804118_6a61f3164f937_crop.jpg"
+  },
+  {
+    "image": "public/uploads/vehicles/entry_1784803526_6a61f0c6a669a.jpg",
+    "gt": "29S6-61468",
+    "crop": "C:\\xampp\\htdocs\\ndbs.com\\_bench_crops\\entry_1784803526_6a61f0c6a669a_crop.jpg"
+  },
+  {
+    "image": "public/uploads/vehicles/entry_1784804100_6a61f30476da3.jpg",
+    "gt": "92CA-03484",
+    "crop": "C:\\xampp\\htdocs\\ndbs.com\\_bench_crops\\entry_1784804100_6a61f30476da3_crop.jpg"
+  },
+  {
+    "image": "public/uploads/vehicles/entry_1784641751_6a5f78d7cafe2.jpg",
+    "gt": "92CA-03484",
+    "crop": "C:\\xampp\\htdocs\\ndbs.com\\_bench_crops\\entry_1784641751_6a5f78d7cafe2_crop.jpg"
+  },
+  {
+    "image": "public/uploads/vehicles/exit_1784641890_6a5f796238a9c.jpg",
+    "gt": "92CA-03484",
+    "crop": "C:\\xampp\\htdocs\\ndbs.com\\_bench_crops\\exit_1784641890_6a5f796238a9c_crop.jpg"
+  },
+  {
+    "image": "public/uploads/vehicles/entry_1784804415_6a61f43f88883.jpg",
+    "gt": "29K2-09456",
+    "crop": "C:\\xampp\\htdocs\\ndbs.com\\_bench_crops\\entry_1784804415_6a61f43f88883_crop.jpg"
+  },
+  {
+    "image": "public/uploads/vehicles/entry_1784804087_6a61f2f76a89c.jpg",
+    "gt": "29K2-09456",
+    "crop": "C:\\xampp\\htdocs\\ndbs.com\\_bench_crops\\entry_1784804087_6a61f2f76a89c_crop.jpg"
+  },
+  {
+    "image": "public/uploads/vehicles/entry_1784804069_6a61f2e5b18e0.jpg",
+    "gt": "29K2-09456",
+    "crop": "C:\\xampp\\htdocs\\ndbs.com\\_bench_crops\\entry_1784804069_6a61f2e5b18e0_crop.jpg"
+  }
+]

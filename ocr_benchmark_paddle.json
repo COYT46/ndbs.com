@@ -1,0 +1,127 @@
+{
+  "engine": "PaddleOCR",
+  "n": 13,
+  "lpra_pct": 84.62,
+  "valid_fmt_pct": 84.62,
+  "avg_cer_pct": 11.97,
+  "avg_latency_ms": 302.7,
+  "rows": [
+    {
+      "image": "public/uploads/vehicles/entry_1784804876_6a61f60c731bb.jpg",
+      "gt": "29AF-82853",
+      "pred": "AF",
+      "exact": false,
+      "valid_fmt": false,
+      "cer": 0.7777777777777778,
+      "ms": 244.2521000011766
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784804905_6a61f6295f7cb.jpg",
+      "gt": "29AF-82853",
+      "pred": "AF",
+      "exact": false,
+      "valid_fmt": false,
+      "cer": 0.7777777777777778,
+      "ms": 169.37680000046385
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804425_6a61f449858f2.jpg",
+      "gt": "29K1-02536",
+      "pred": "29K1-02536",
+      "exact": true,
+      "valid_fmt": true,
+      "cer": 0.0,
+      "ms": 777.2594000016397
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784804825_6a61f5d905705.jpg",
+      "gt": "29K1-02536",
+      "pred": "29K1-02536",
+      "exact": true,
+      "valid_fmt": true,
+      "cer": 0.0,
+      "ms": 204.89049999741837
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804106_6a61f30a3bd7e.jpg",
+      "gt": "29S6-61468",
+      "pred": "29S6-61468",
+      "exact": true,
+      "valid_fmt": true,
+      "cer": 0.0,
+      "ms": 592.1696000004886
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784804118_6a61f3164f937.jpg",
+      "gt": "29S6-61468",
+      "pred": "29S6-61468",
+      "exact": true,
+      "valid_fmt": true,
+      "cer": 0.0,
+      "ms": 194.68940000297152
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784803526_6a61f0c6a669a.jpg",
+      "gt": "29S6-61468",
+      "pred": "29S6-61468",
+      "exact": true,
+      "valid_fmt": true,
+      "cer": 0.0,
+      "ms": 101.59049999856506
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804100_6a61f30476da3.jpg",
+      "gt": "92CA-03484",
+      "pred": "92CA-03484",
+      "exact": true,
+      "valid_fmt": true,
+      "cer": 0.0,
+      "ms": 529.7279000005801
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784641751_6a5f78d7cafe2.jpg",
+      "gt": "92CA-03484",
+      "pred": "92CA-03484",
+      "exact": true,
+      "valid_fmt": true,
+      "cer": 0.0,
+      "ms": 142.0521000000008
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784641890_6a5f796238a9c.jpg",
+      "gt": "92CA-03484",
+      "pred": "92CA-03484",
+      "exact": true,
+      "valid_fmt": true,
+      "cer": 0.0,
+      "ms": 155.43549999711104
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804415_6a61f43f88883.jpg",
+      "gt": "29K2-09456",
+      "pred": "29K2-09456",
+      "exact": true,
+      "valid_fmt": true,
+      "cer": 0.0,
+      "ms": 363.26439999902504
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804087_6a61f2f76a89c.jpg",
+      "gt": "29K2-09456",
+      "pred": "29K2-09456",
+      "exact": true,
+      "valid_fmt": true,
+      "cer": 0.0,
+      "ms": 342.6384999984293
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804069_6a61f2e5b18e0.jpg",
+      "gt": "29K2-09456",
+      "pred": "29K2-09456",
+      "exact": true,
+      "valid_fmt": true,
+      "cer": 0.0,
+      "ms": 117.99080000128015
+    }
+  ]
+}
