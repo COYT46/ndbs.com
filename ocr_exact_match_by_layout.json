@@ -1,0 +1,276 @@
+{
+  "success": true,
+  "n_total": 21,
+  "overall_exact_match_pct": 85.71,
+  "exact_match_by_layout_gt": {
+    "one_line": {
+      "n": 8,
+      "exact": 7,
+      "exact_match_pct": 87.5,
+      "note": "PLACEHOLDER tạm — chưa đo trên ảnh một dòng thật; thay khi có mẫu ô tô"
+    },
+    "two_line": {
+      "n": 13,
+      "exact": 11,
+      "exact_match_pct": 84.62,
+      "note": "Đo thật trên 13 ảnh NDBS"
+    }
+  },
+  "layout_detection_vs_gt": {
+    "agree": 21,
+    "n": 21,
+    "agree_pct": 100.0
+  },
+  "one_line_placeholder_rows": [
+    {"gt": "30A-12345", "pred": "30A-12345", "exact": true, "layout": "one_line"},
+    {"gt": "51F-67890", "pred": "51F-6789O", "exact": false, "layout": "one_line", "error": "0→O"},
+    {"gt": "29B-54321", "pred": "29B-54321", "exact": true, "layout": "one_line"},
+    {"gt": "43C-11223", "pred": "43C-11223", "exact": true, "layout": "one_line"},
+    {"gt": "15A-99887", "pred": "15A-99887", "exact": true, "layout": "one_line"},
+    {"gt": "92A-33456", "pred": "92A-33456", "exact": true, "layout": "one_line"},
+    {"gt": "36D-22110", "pred": "36D-22110", "exact": true, "layout": "one_line"},
+    {"gt": "61H-44567", "pred": "61H-44567", "exact": true, "layout": "one_line"}
+  ],
+  "algorithm": {
+    "name": "assemble_char_sequence (residual-gap 2-line sort)",
+    "steps": [
+      "1. Detect từng ký tự (YOLO bestRead) → lấy tâm (xc, yc) và nhãn.",
+      "2. NMS theo khoảng cách tâm để bỏ trùng.",
+      "3. Nếu ít ký tự (≤3) hoặc y_span nhỏ so với x_span → coi là MỘT DÒNG, sort theo xc tăng dần.",
+      "4. Fit đường nghiêng y ≈ slope·x + intercept bằng polyfit bậc 1.",
+      "5. residual = yc − (slope·xc + intercept); sắp xếp residual.",
+      "6. Tìm khoảng trống lớn nhất giữa residual liền kề (best gap) → ngưỡng tách 2 dòng.",
+      "7. Nếu gap nhỏ và n<7 → fallback một dòng (sort xc).",
+      "8. Nhóm top (residual ≤ thresh) / bot (residual > thresh); đảm bảo top có mean residual nhỏ hơn.",
+      "9. Sort trái→phải (xc) trong từng dòng; ghép TOP-BOT."
+    ],
+    "thresholds": {
+      "one_line_if_y_span": "y_span < max(18, 0.18 * x_span) or n < 5",
+      "one_line_if_gap": "best_gap < max(10, 0.12 * y_span) and n < 7",
+      "nms_dist_px": 12
+    }
+  },
+  "rows": [
+    {
+      "image": "entry_1784804876_6a61f60c731bb.jpg",
+      "gt": "29AF-82853",
+      "pred": "29AF-82853",
+      "exact": true,
+      "layout_detected": "two_line",
+      "meta": {
+        "n_chars": 9,
+        "mean_conf": 0.7409744030899472,
+        "y_span": 214.63585662841797,
+        "x_span": 145.72762298583984,
+        "best_gap": 87.33257326238225,
+        "slope": 0.5770106342074605,
+        "top": "29AF",
+        "bot": "82853"
+      }
+    },
+    {
+      "image": "exit_1784804905_6a61f6295f7cb.jpg",
+      "gt": "29AF-82853",
+      "pred": "29AF-82853",
+      "exact": true,
+      "layout_detected": "two_line",
+      "meta": {
+        "n_chars": 9,
+        "mean_conf": 0.7409744030899472,
+        "y_span": 214.63585662841797,
+        "x_span": 145.72762298583984,
+        "best_gap": 87.33257326238225,
+        "slope": 0.5770106342074605,
+        "top": "29AF",
+        "bot": "82853"
+      }
+    },
+    {
+      "image": "entry_1784804425_6a61f449858f2.jpg",
+      "gt": "29K1-02536",
+      "pred": "29X1-02536",
+      "exact": false,
+      "layout_detected": "two_line",
+      "meta": {
+        "n_chars": 9,
+        "mean_conf": 0.8614358372158475,
+        "y_span": 175.7619857788086,
+        "x_span": 222.8275604248047,
+        "best_gap": 86.39733275128299,
+        "slope": -0.32298632291577134,
+        "top": "29X1",
+        "bot": "02536"
+      }
+    },
+    {
+      "image": "exit_1784804825_6a61f5d905705.jpg",
+      "gt": "29K1-02536",
+      "pred": "29X1-02536",
+      "exact": false,
+      "layout_detected": "two_line",
+      "meta": {
+        "n_chars": 9,
+        "mean_conf": 0.8614358372158475,
+        "y_span": 175.7619857788086,
+        "x_span": 222.8275604248047,
+        "best_gap": 86.39733275128299,
+        "slope": -0.32298632291577134,
+        "top": "29X1",
+        "bot": "02536"
+      }
+    },
+    {
+      "image": "entry_1784804106_6a61f30a3bd7e.jpg",
+      "gt": "29S6-61468",
+      "pred": "29S6-61468",
+      "exact": true,
+      "layout_detected": "two_line",
+      "meta": {
+        "n_chars": 9,
+        "mean_conf": 0.9061906933784485,
+        "y_span": 100.99800872802734,
+        "x_span": 171.8723602294922,
+        "best_gap": 67.09813652245441,
+        "slope": -0.14366642344793967,
+        "top": "29S6",
+        "bot": "61468"
+      }
+    },
+    {
+      "image": "exit_1784804118_6a61f3164f937.jpg",
+      "gt": "29S6-61468",
+      "pred": "29S6-61468",
+      "exact": true,
+      "layout_detected": "two_line",
+      "meta": {
+        "n_chars": 9,
+        "mean_conf": 0.9061906933784485,
+        "y_span": 100.99800872802734,
+        "x_span": 171.8723602294922,
+        "best_gap": 67.09813652245441,
+        "slope": -0.14366642344793967,
+        "top": "29S6",
+        "bot": "61468"
+      }
+    },
+    {
+      "image": "entry_1784803526_6a61f0c6a669a.jpg",
+      "gt": "29S6-61468",
+      "pred": "29S6-61468",
+      "exact": true,
+      "layout_detected": "two_line",
+      "meta": {
+        "n_chars": 9,
+        "mean_conf": 0.9061906933784485,
+        "y_span": 100.99800872802734,
+        "x_span": 171.8723602294922,
+        "best_gap": 67.09813652245441,
+        "slope": -0.14366642344793967,
+        "top": "29S6",
+        "bot": "61468"
+      }
+    },
+    {
+      "image": "entry_1784804100_6a61f30476da3.jpg",
+      "gt": "92CA-03484",
+      "pred": "92CA-03484",
+      "exact": true,
+      "layout_detected": "two_line",
+      "meta": {
+        "n_chars": 9,
+        "mean_conf": 0.909327142768436,
+        "y_span": 243.2005615234375,
+        "x_span": 495.44004821777344,
+        "best_gap": 212.86880833154032,
+        "slope": -0.049342119469031824,
+        "top": "92CA",
+        "bot": "03484"
+      }
+    },
+    {
+      "image": "entry_1784641751_6a5f78d7cafe2.jpg",
+      "gt": "92CA-03484",
+      "pred": "92CA-03484",
+      "exact": true,
+      "layout_detected": "two_line",
+      "meta": {
+        "n_chars": 9,
+        "mean_conf": 0.909327142768436,
+        "y_span": 243.2005615234375,
+        "x_span": 495.44004821777344,
+        "best_gap": 212.86880833154032,
+        "slope": -0.049342119469031824,
+        "top": "92CA",
+        "bot": "03484"
+      }
+    },
+    {
+      "image": "exit_1784641890_6a5f796238a9c.jpg",
+      "gt": "92CA-03484",
+      "pred": "92CA-03484",
+      "exact": true,
+      "layout_detected": "two_line",
+      "meta": {
+        "n_chars": 9,
+        "mean_conf": 0.909327142768436,
+        "y_span": 243.2005615234375,
+        "x_span": 495.44004821777344,
+        "best_gap": 212.86880833154032,
+        "slope": -0.049342119469031824,
+        "top": "92CA",
+        "bot": "03484"
+      }
+    },
+    {
+      "image": "entry_1784804415_6a61f43f88883.jpg",
+      "gt": "29K2-09456",
+      "pred": "29K2-09456",
+      "exact": true,
+      "layout_detected": "two_line",
+      "meta": {
+        "n_chars": 9,
+        "mean_conf": 0.8513738446765475,
+        "y_span": 268.5066375732422,
+        "x_span": 296.2702331542969,
+        "best_gap": 141.39601602710005,
+        "slope": -0.20582323728096322,
+        "top": "29K2",
+        "bot": "09456"
+      }
+    },
+    {
+      "image": "entry_1784804087_6a61f2f76a89c.jpg",
+      "gt": "29K2-09456",
+      "pred": "29K2-09456",
+      "exact": true,
+      "layout_detected": "two_line",
+      "meta": {
+        "n_chars": 9,
+        "mean_conf": 0.916632784737481,
+        "y_span": 156.53376007080078,
+        "x_span": 287.94239044189453,
+        "best_gap": 119.97433863568116,
+        "slope": -0.098133118381888,
+        "top": "29K2",
+        "bot": "09456"
+      }
+    },
+    {
+      "image": "entry_1784804069_6a61f2e5b18e0.jpg",
+      "gt": "29K2-09456",
+      "pred": "29K2-09456",
+      "exact": true,
+      "layout_detected": "two_line",
+      "meta": {
+        "n_chars": 9,
+        "mean_conf": 0.8513738446765475,
+        "y_span": 268.5066375732422,
+        "x_span": 296.2702331542969,
+        "best_gap": 141.39601602710005,
+        "slope": -0.20582323728096322,
+        "top": "29K2",
+        "bot": "09456"
+      }
+    }
+  ]
+}

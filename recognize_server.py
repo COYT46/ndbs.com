@@ -20,7 +20,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from recognize import load_models, recognize_plate  # noqa: E402
+from recognize import load_models, recognize_plate, detect_plate  # noqa: E402
 
 HOST = os.environ.get("NDBS_OCR_HOST", "127.0.0.1")
 PORT = int(os.environ.get("NDBS_OCR_PORT", "8766"))
@@ -47,16 +47,19 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/health":
             self._send_json(200, {"ok": True, "service": "ndbs-recognize", "pid": os.getpid()})
             return
-        if parsed.path == "/recognize":
+        if parsed.path in ("/recognize", "/detect"):
             qs = parse_qs(parsed.query)
             image = (qs.get("image") or [None])[0]
-            self._recognize(image)
+            if parsed.path == "/detect":
+                self._detect(image)
+            else:
+                self._recognize(image)
             return
         self._send_json(404, {"success": False, "error": "Not found"})
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        if parsed.path != "/recognize":
+        if parsed.path not in ("/recognize", "/detect"):
             self._send_json(404, {"success": False, "error": "Not found"})
             return
 
@@ -69,7 +72,28 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             image = raw.decode("utf-8", errors="ignore").strip()
 
-        self._recognize(image)
+        if parsed.path == "/detect":
+            self._detect(image)
+        else:
+            self._recognize(image)
+
+    def _detect(self, image):
+        if not image:
+            self._send_json(400, {"success": False, "detected": False, "error": "Missing image path"})
+            return
+        if not os.path.exists(image):
+            self._send_json(404, {"success": False, "detected": False, "error": f"Image file not found: {image}"})
+            return
+        try:
+            result = detect_plate(image)
+            self._send_json(200, result)
+        except Exception as e:
+            self._send_json(500, {
+                "success": False,
+                "detected": False,
+                "error": str(e),
+                "trace": traceback.format_exc(),
+            })
 
     def _recognize(self, image):
         if not image:

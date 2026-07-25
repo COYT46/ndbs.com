@@ -8,6 +8,25 @@ use Illuminate\Support\Str;
 
 class ApiController extends Controller
 {
+    /**
+     * Nhả session sớm để request LIVE / poll song song không bị kẹt trên file session.
+     */
+    private function releaseSessionLock()
+    {
+        try {
+            if (!session()->isStarted()) {
+                return;
+            }
+            session()->save();
+            $handler = session()->getHandler();
+            if (method_exists($handler, 'close')) {
+                $handler->close();
+            }
+        } catch (\Throwable $e) {
+            // ignore
+        }
+    }
+
     private function getPythonExecutable()
     {
         $envPython = env('PYTHON_PATH');
@@ -171,6 +190,71 @@ class ApiController extends Controller
     }
 
     /**
+     * Chỉ phát hiện khung biển (không đọc ký tự). Trả null nếu server chưa chạy.
+     */
+    private function runDetectionViaServer($imageFullPath)
+    {
+        $url = $this->getRecognizeServerUrl() . '/detect';
+        $payload = json_encode(['image' => $imageFullPath], JSON_UNESCAPED_SLASHES);
+
+        if (!function_exists('curl_init')) {
+            return null;
+        }
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 2,
+            CURLOPT_TIMEOUT => 30,
+        ]);
+        $response = curl_exec($ch);
+        $errno = curl_errno($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($errno !== 0 || $response === false || $httpCode === 0) {
+            return null;
+        }
+
+        $data = json_decode($response, true);
+        if (!is_array($data)) {
+            return null;
+        }
+
+        return [
+            'success' => !empty($data['success']),
+            'detected' => !empty($data['detected']),
+            'confidence' => isset($data['confidence']) ? (float) $data['confidence'] : 0.0,
+            'error' => $data['error'] ?? null,
+        ];
+    }
+
+    private function runDetection($imageFullPath)
+    {
+        $this->ensureRecognizeServerRunning();
+        $viaServer = $this->runDetectionViaServer($imageFullPath);
+        if ($viaServer !== null) {
+            return $viaServer;
+        }
+        // Fallback: chạy full recognize — nếu fail ở stage detect thì coi như chưa thấy biển
+        $full = $this->runRecognition($imageFullPath);
+        if (!empty($full['success'])) {
+            return ['success' => true, 'detected' => true, 'confidence' => 1.0];
+        }
+        $err = (string) ($full['error'] ?? '');
+        $isDetectFail = str_contains(mb_strtolower($err), 'biển') || str_contains(mb_strtolower($err), 'detect');
+        return [
+            'success' => true,
+            'detected' => false,
+            'confidence' => 0.0,
+            'error' => $isDetectFail ? $err : 'Chưa phát hiện biển số',
+        ];
+    }
+
+    /**
      * Gọi server AI giữ model trong RAM (nhanh). Trả null nếu server chưa chạy.
      */
     private function runRecognitionViaServer($imageFullPath)
@@ -202,7 +286,11 @@ class ApiController extends Controller
                 if (!empty($data['success']) && !empty($data['plate'])) {
                     return ['success' => true, 'plate' => $data['plate']];
                 }
-                return ['success' => false, 'error' => $data['error'] ?? 'Không nhận diện được ký tự biển số.'];
+                return [
+                    'success' => false,
+                    'error' => $data['error'] ?? 'Không nhận diện được ký tự biển số.',
+                    'stage' => $data['stage'] ?? null,
+                ];
             }
 
             return null;
@@ -284,6 +372,126 @@ class ApiController extends Controller
         return ['success' => false, 'error' => iconv('UTF-8', 'UTF-8//IGNORE', $errorMsg)];
     }
 
+    /**
+     * Chỉ nhận diện biển số từ ảnh (không lưu DB) — dùng cho camera realtime.
+     */
+    public function recognizePreview(Request $request)
+    {
+        try {
+            if (!$request->hasFile('image')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Không có ảnh để nhận diện!'
+                ]);
+            }
+
+            $this->releaseSessionLock();
+
+            $file = $request->file('image');
+            $tmpDir = storage_path('app/ocr_preview');
+            if (!file_exists($tmpDir)) {
+                @mkdir($tmpDir, 0777, true);
+            }
+
+            $ext = strtolower($file->getClientOriginalExtension() ?: 'jpg');
+            if (!in_array($ext, ['jpg', 'jpeg', 'png', 'webp', 'bmp'], true)) {
+                $ext = 'jpg';
+            }
+            $filename = 'preview_' . time() . '_' . uniqid() . '.' . $ext;
+            $fullPath = $tmpDir . DIRECTORY_SEPARATOR . $filename;
+            $file->move($tmpDir, $filename);
+
+            try {
+                $aiResult = $this->runRecognition($fullPath);
+            } finally {
+                if (is_file($fullPath)) {
+                    @unlink($fullPath);
+                }
+            }
+
+            if (!$aiResult['success']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $aiResult['error'] ?? 'Không nhận diện được biển số.',
+                    'stage' => $aiResult['stage'] ?? null,
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'plate_number' => strtoupper($aiResult['plate']),
+            ]);
+        } catch (\Exception $e) {
+            $msg = $e->getMessage();
+            if (!mb_check_encoding($msg, 'UTF-8')) {
+                $msg = mb_convert_encoding($msg, 'UTF-8', 'auto');
+            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Lỗi hệ thống: ' . iconv('UTF-8', 'UTF-8//IGNORE', $msg)
+            ], 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
+        }
+    }
+
+    /**
+     * Bước 1 LIVE: chỉ kiểm tra có khung biển hay chưa (không OCR ký tự).
+     */
+    public function detectPreview(Request $request)
+    {
+        try {
+            if (!$request->hasFile('image')) {
+                return response()->json([
+                    'success' => false,
+                    'detected' => false,
+                    'message' => 'Không có ảnh!'
+                ]);
+            }
+
+            $this->releaseSessionLock();
+
+            $file = $request->file('image');
+            $tmpDir = storage_path('app/ocr_preview');
+            if (!file_exists($tmpDir)) {
+                @mkdir($tmpDir, 0777, true);
+            }
+
+            $ext = strtolower($file->getClientOriginalExtension() ?: 'jpg');
+            if (!in_array($ext, ['jpg', 'jpeg', 'png', 'webp', 'bmp'], true)) {
+                $ext = 'jpg';
+            }
+            $filename = 'detect_' . time() . '_' . uniqid() . '.' . $ext;
+            $fullPath = $tmpDir . DIRECTORY_SEPARATOR . $filename;
+            $file->move($tmpDir, $filename);
+
+            try {
+                $aiResult = $this->runDetection($fullPath);
+            } finally {
+                if (is_file($fullPath)) {
+                    @unlink($fullPath);
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'detected' => !empty($aiResult['detected']),
+                'confidence' => $aiResult['confidence'] ?? 0,
+                'message' => !empty($aiResult['detected'])
+                    ? 'Đã thấy biển số'
+                    : ($aiResult['error'] ?? 'Chưa thấy biển số'),
+            ]);
+        } catch (\Exception $e) {
+            $msg = $e->getMessage();
+            if (!mb_check_encoding($msg, 'UTF-8')) {
+                $msg = mb_convert_encoding($msg, 'UTF-8', 'auto');
+            }
+            return response()->json([
+                'success' => false,
+                'detected' => false,
+                'message' => 'Lỗi hệ thống: ' . iconv('UTF-8', 'UTF-8//IGNORE', $msg)
+            ], 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
+        }
+    }
+
     public function recognizeEntry(Request $request)
     {
         try {
@@ -305,6 +513,8 @@ class ApiController extends Controller
             $relativePath = 'public/uploads/vehicles/' . $filename;
             $fullPath = $uploadDir . DIRECTORY_SEPARATOR . $filename;
 
+            $this->releaseSessionLock();
+
             // Run AI Recognition
             $aiResult = $this->runRecognition($fullPath);
             if (!$aiResult['success']) {
@@ -315,6 +525,24 @@ class ApiController extends Controller
             }
 
             $plate = strtoupper($aiResult['plate']);
+
+            // Tránh tạo 2 log liên tiếp cùng biển (ĐT + PC cùng LIVE)
+            $recent = VehicleLog::where('plate_number', $plate)
+                ->where('status', 'in')
+                ->where('entry_time', '>=', now()->subSeconds(30))
+                ->latest('id')
+                ->first();
+            if ($recent) {
+                return response()->json([
+                    'success' => true,
+                    'log_id' => $recent->id,
+                    'plate_number' => $recent->plate_number,
+                    'code' => $recent->code,
+                    'image_url' => $recent->entry_image ? asset($recent->entry_image) : null,
+                    'message' => 'Xe vừa được nhận diện (trùng trong 30s).',
+                    'deduped' => true,
+                ]);
+            }
 
             // Generate a 6-character code (2 letters, 4 numbers)
             do {
@@ -333,6 +561,7 @@ class ApiController extends Controller
 
             return response()->json([
                 'success' => true,
+                'log_id' => $log->id,
                 'plate_number' => $plate,
                 'code' => $code,
                 'image_url' => asset($relativePath),
@@ -393,6 +622,8 @@ class ApiController extends Controller
             $relativePath = 'public/uploads/vehicles/' . $filename;
             $fullPath = $uploadDir . DIRECTORY_SEPARATOR . $filename;
 
+            $this->releaseSessionLock();
+
             // Run AI Recognition on Exit Image
             $aiResult = $this->runRecognition($fullPath);
             if (!$aiResult['success']) {
@@ -420,6 +651,9 @@ class ApiController extends Controller
                 'guard_out_id' => auth()->id(),
                 'is_valid' => null,
             ]);
+
+            // Đã dùng mã → tắt kích hoạt quét ra trên ĐT
+            $this->clearArmedExitCodeStorage();
 
             return response()->json([
                 'success' => true,
@@ -541,5 +775,246 @@ class ApiController extends Controller
             'pending' => $pendingLogs,
             'completed' => $completedLogs
         ], 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
+    }
+
+    /**
+     * Máy tính poll trạng thái: xe vào mới + lượt đang chờ xác nhận Hợp lệ.
+     */
+    public function guardMonitorState()
+    {
+        $this->releaseSessionLock();
+
+        $lastEntry = VehicleLog::query()
+            ->where('entry_time', '>=', now()->subMinutes(5))
+            ->orderByDesc('id')
+            ->first();
+
+        $pendingValidation = VehicleLog::query()
+            ->whereNotNull('exit_image')
+            ->whereNull('is_valid')
+            ->where('status', 'in')
+            ->orderByDesc('id')
+            ->first();
+
+        $entryPayload = null;
+        if ($lastEntry) {
+            $entryPayload = [
+                'id' => $lastEntry->id,
+                'plate_number' => $lastEntry->plate_number,
+                'code' => $lastEntry->code,
+                'entry_image' => $lastEntry->entry_image ? asset($lastEntry->entry_image) : null,
+                'entry_time' => optional($lastEntry->entry_time)->toDateTimeString(),
+            ];
+        }
+
+        $pendingPayload = null;
+        if ($pendingValidation) {
+            $cleanEntry = preg_replace('/[^A-Z0-9]/i', '', (string) $pendingValidation->plate_number);
+            $cleanExit = preg_replace('/[^A-Z0-9]/i', '', (string) $pendingValidation->exit_plate_number);
+            $pendingPayload = [
+                'log_id' => $pendingValidation->id,
+                'code' => $pendingValidation->code,
+                'entry_plate' => $pendingValidation->plate_number,
+                'exit_plate' => $pendingValidation->exit_plate_number,
+                'entry_image' => $pendingValidation->entry_image ? asset($pendingValidation->entry_image) : null,
+                'exit_image' => $pendingValidation->exit_image ? asset($pendingValidation->exit_image) : null,
+                'match' => ($cleanEntry !== '' && $cleanEntry === $cleanExit),
+                'message' => ($cleanEntry !== '' && $cleanEntry === $cleanExit)
+                    ? ('Biển số khớp: ' . $pendingValidation->exit_plate_number . '. Vui lòng xác nhận.')
+                    : ('Biển số xe ra (' . $pendingValidation->exit_plate_number . ') không khớp với xe vào (' . $pendingValidation->plate_number . ').'),
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'last_entry' => $entryPayload,
+            'pending_validation' => $pendingPayload,
+            'armed_exit_code' => $this->readArmedExitCode(),
+            'live_preview' => [
+                'entry' => $this->readLivePreview('entry'),
+                'exit' => $this->readLivePreview('exit'),
+            ],
+        ], 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
+    }
+
+    /**
+     * ĐT đẩy frame LIVE → máy tính giám sát hiện lại.
+     */
+    public function uploadLivePreview(Request $request)
+    {
+        $side = $request->input('side', 'entry') === 'exit' ? 'exit' : 'entry';
+        if (!$request->hasFile('image')) {
+            return response()->json(['success' => false, 'message' => 'Thiếu ảnh'], 422);
+        }
+
+        $this->releaseSessionLock();
+
+        $dir = public_path('uploads/live');
+        if (!file_exists($dir)) {
+            @mkdir($dir, 0777, true);
+        }
+
+        $filename = $side . '.jpg';
+        $fullPath = $dir . DIRECTORY_SEPARATOR . $filename;
+        if (is_file($fullPath)) {
+            @unlink($fullPath);
+        }
+        $request->file('image')->move($dir, $filename);
+        @touch($fullPath);
+
+        $ts = time();
+        return response()->json([
+            'success' => true,
+            'side' => $side,
+            'url' => asset('public/uploads/live/' . $filename) . '?t=' . $ts,
+            'ts' => $ts,
+        ]);
+    }
+
+    private function readLivePreview($side)
+    {
+        $side = $side === 'exit' ? 'exit' : 'entry';
+        $fullPath = public_path('uploads/live') . DIRECTORY_SEPARATOR . $side . '.jpg';
+        if (!is_file($fullPath)) {
+            return ['active' => false, 'url' => null, 'ts' => null];
+        }
+        $ts = (int) @filemtime($fullPath);
+        $age = time() - $ts;
+        // Frame cũ hơn 4s → ĐT đã tắt / mất mạng
+        $active = $age <= 4;
+        return [
+            'active' => $active,
+            'url' => $active ? (asset('public/uploads/live/' . $side . '.jpg') . '?t=' . $ts) : null,
+            'ts' => $ts,
+        ];
+    }
+
+    public function armedExitCodeStatus()
+    {
+        $this->releaseSessionLock();
+
+        return response()->json([
+            'success' => true,
+            'armed_exit_code' => $this->readArmedExitCode(),
+        ], 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
+    }
+
+    private function armedExitCodePath()
+    {
+        $dir = storage_path('app');
+        if (!file_exists($dir)) {
+            @mkdir($dir, 0777, true);
+        }
+        return $dir . DIRECTORY_SEPARATOR . 'armed_exit_code.json';
+    }
+
+    private function writeArmedExitCode($code, $logId)
+    {
+        $payload = [
+            'code' => strtoupper((string) $code),
+            'log_id' => $logId,
+            'ts' => time(),
+            'by_user' => auth()->id(),
+        ];
+        file_put_contents($this->armedExitCodePath(), json_encode($payload, JSON_UNESCAPED_UNICODE));
+        try {
+            \Illuminate\Support\Facades\Cache::put('armed_exit_code', $payload, 300);
+        } catch (\Throwable $e) {
+            // ignore cache errors — file vẫn là nguồn chính
+        }
+    }
+
+    private function clearArmedExitCodeStorage()
+    {
+        $path = $this->armedExitCodePath();
+        if (is_file($path)) {
+            @unlink($path);
+        }
+        try {
+            \Illuminate\Support\Facades\Cache::forget('armed_exit_code');
+        } catch (\Throwable $e) {
+            // ignore
+        }
+    }
+
+    private function readArmedExitCode()
+    {
+        // Ưu tiên cache (nhanh, ít race), fallback file
+        try {
+            $cached = \Illuminate\Support\Facades\Cache::get('armed_exit_code');
+            if (is_array($cached) && !empty($cached['code'])) {
+                $age = time() - (int) ($cached['ts'] ?? 0);
+                if ($age <= 300) {
+                    return strtoupper((string) $cached['code']);
+                }
+                \Illuminate\Support\Facades\Cache::forget('armed_exit_code');
+            }
+        } catch (\Throwable $e) {
+            // fall through to file
+        }
+
+        $path = $this->armedExitCodePath();
+        if (!is_file($path)) {
+            return null;
+        }
+        $data = json_decode(@file_get_contents($path), true);
+        if (!is_array($data) || empty($data['code'])) {
+            return null;
+        }
+        $age = time() - (int) ($data['ts'] ?? 0);
+        if ($age > 300) {
+            $this->clearArmedExitCodeStorage();
+            return null;
+        }
+        // Đồng bộ lại cache nếu file còn hạn
+        try {
+            \Illuminate\Support\Facades\Cache::put('armed_exit_code', $data, 300 - $age);
+        } catch (\Throwable $e) {
+            // ignore
+        }
+        return strtoupper((string) $data['code']);
+    }
+
+    /**
+     * Máy tính nhập mã code (như quẹt thẻ) → kích hoạt ĐT quét xe ra.
+     */
+    public function armExitCode(Request $request)
+    {
+        $code = strtoupper(trim((string) $request->input('code', '')));
+        if (strlen($code) !== 6) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Mã code phải gồm đúng 6 ký tự!',
+            ], 422);
+        }
+
+        $log = VehicleLog::where('code', $code)
+            ->where(function ($q) {
+                $q->where('status', 'in')->orWhere('is_valid', false);
+            })
+            ->latest()
+            ->first();
+
+        if (!$log) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Không tìm thấy xe chưa ra với mã: ' . $code,
+            ], 404);
+        }
+
+        $this->writeArmedExitCode($code, $log->id);
+
+        return response()->json([
+            'success' => true,
+            'code' => $code,
+            'plate_number' => $log->plate_number,
+            'message' => 'Đã kích hoạt quét xe ra. Điện thoại sẽ tự chụp khi thấy biển.',
+        ]);
+    }
+
+    public function clearExitCode()
+    {
+        $this->clearArmedExitCodeStorage();
+        return response()->json(['success' => true]);
     }
 }

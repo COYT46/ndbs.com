@@ -25,11 +25,20 @@ Route::middleware(['auth'])->group(function () {
 
     // Guard Routes
     Route::prefix('guard')->group(function () {
-        Route::get('/dashboard', function() {
+        Route::get('/dashboard', function () {
             if (auth()->user()->role !== 'guard') {
                 return redirect('/');
             }
             return view('guard.dashboard');
         })->name('guard.dashboard');
+
+        // Trang quét ĐT: mở là tự camera + tự nhận diện (không bấm)
+        Route::get('/scan/{side}', function ($side) {
+            if (auth()->user()->role !== 'guard') {
+                return redirect('/');
+            }
+            $side = $side === 'exit' ? 'exit' : 'entry';
+            return view('guard.scan', compact('side'));
+        })->name('guard.scan');
     });
 });

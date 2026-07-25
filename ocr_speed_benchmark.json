@@ -1,0 +1,342 @@
+{
+  "success": true,
+  "device": "CPU",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.14.5",
+  "n_images": 13,
+  "warmup": 5,
+  "rounds": 3,
+  "note": "FPS = 1000 / avg_ms. Warmup không tính vào trung bình. YOLO E2E = detect(best.pt) + read(bestRead.pt). EasyOCR/PaddleOCR đo trên cùng crop do best.pt cắt.",
+  "stages": {
+    "yolo_detect_best_pt": {
+      "n": 39,
+      "avg_ms": 986.2,
+      "min_ms": 641.0,
+      "max_ms": 2266.1,
+      "p50_ms": 916.0,
+      "fps": 1.01
+    },
+    "yolo_read_bestRead_pt": {
+      "n": 39,
+      "avg_ms": 186.9,
+      "min_ms": 135.5,
+      "max_ms": 330.4,
+      "p50_ms": 187.7,
+      "fps": 5.35
+    },
+    "yolo_e2e_detect_plus_read": {
+      "n": 39,
+      "avg_ms": 1173.2,
+      "min_ms": 820.8,
+      "max_ms": 2453.9,
+      "p50_ms": 1090.7,
+      "fps": 0.85
+    },
+    "easyocr_on_crop": {
+      "n": 39,
+      "avg_ms": 1551.0,
+      "min_ms": 705.5,
+      "max_ms": 2624.2,
+      "p50_ms": 1590.2,
+      "fps": 0.64
+    },
+    "paddleocr_on_crop": {
+      "n": 13,
+      "avg_ms": 302.7,
+      "min_ms": 101.6,
+      "max_ms": 777.3,
+      "p50_ms": 204.9,
+      "fps": 3.3,
+      "source": "ocr_benchmark_paddle.json"
+    }
+  },
+  "legacy_avg_from_ocr_benchmark_ndbs": {
+    "YOLO tự huấn luyện (best.pt + bestRead.pt)": {
+      "avg_ms": 110.5,
+      "fps": 9.05
+    },
+    "EasyOCR": {
+      "avg_ms": 888.8,
+      "fps": 1.13
+    },
+    "PaddleOCR": {
+      "avg_ms": 302.7,
+      "fps": 3.3
+    }
+  },
+  "per_image": [
+    {
+      "image": "public/uploads/vehicles/entry_1784804876_6a61f60c731bb.jpg",
+      "detect_ms": 1019.3948999803979,
+      "read_ms": 143.9028999884613,
+      "e2e_ms": 1163.2977999688592,
+      "easyocr_ms": 1588.6044000217225
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804876_6a61f60c731bb.jpg",
+      "detect_ms": 1039.023499994073,
+      "read_ms": 135.52999999956228,
+      "e2e_ms": 1174.5534999936353,
+      "easyocr_ms": 1570.695300004445
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804876_6a61f60c731bb.jpg",
+      "detect_ms": 1051.984399993671,
+      "read_ms": 136.4913000143133,
+      "e2e_ms": 1188.4757000079844,
+      "easyocr_ms": 1743.4791999985464
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784804905_6a61f6295f7cb.jpg",
+      "detect_ms": 1183.4221000026446,
+      "read_ms": 157.25460002431646,
+      "e2e_ms": 1340.676700026961,
+      "easyocr_ms": 1849.178700009361
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784804905_6a61f6295f7cb.jpg",
+      "detect_ms": 1084.1470999876037,
+      "read_ms": 137.38519998150878,
+      "e2e_ms": 1221.5322999691125,
+      "easyocr_ms": 1590.1851000089664
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784804905_6a61f6295f7cb.jpg",
+      "detect_ms": 1031.6439000016544,
+      "read_ms": 138.43660001293756,
+      "e2e_ms": 1170.080500014592,
+      "easyocr_ms": 1609.166300011566
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804425_6a61f449858f2.jpg",
+      "detect_ms": 642.7236000017729,
+      "read_ms": 178.26529999729246,
+      "e2e_ms": 820.9888999990653,
+      "easyocr_ms": 2029.201600002125
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804425_6a61f449858f2.jpg",
+      "detect_ms": 666.1488999961875,
+      "read_ms": 193.04910002392717,
+      "e2e_ms": 859.1980000201147,
+      "easyocr_ms": 2417.470999993384
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804425_6a61f449858f2.jpg",
+      "detect_ms": 915.9576999954879,
+      "read_ms": 196.45720001426525,
+      "e2e_ms": 1112.4149000097532,
+      "easyocr_ms": 1964.5703000132926
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784804825_6a61f5d905705.jpg",
+      "detect_ms": 641.0371999954805,
+      "read_ms": 179.75619999924675,
+      "e2e_ms": 820.7933999947272,
+      "easyocr_ms": 1982.8808000020217
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784804825_6a61f5d905705.jpg",
+      "detect_ms": 665.5818999861367,
+      "read_ms": 189.39439998939633,
+      "e2e_ms": 854.976299975533,
+      "easyocr_ms": 2624.184900021646
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784804825_6a61f5d905705.jpg",
+      "detect_ms": 1741.201299999375,
+      "read_ms": 330.43080000788905,
+      "e2e_ms": 2071.632100007264,
+      "easyocr_ms": 2588.1489000166766
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804106_6a61f30a3bd7e.jpg",
+      "detect_ms": 1371.6140000033192,
+      "read_ms": 311.12539998139255,
+      "e2e_ms": 1682.7393999847118,
+      "easyocr_ms": 1603.8501000148244
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804106_6a61f30a3bd7e.jpg",
+      "detect_ms": 1525.2346000052057,
+      "read_ms": 227.6175000006333,
+      "e2e_ms": 1752.852100005839,
+      "easyocr_ms": 1374.962100002449
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804106_6a61f30a3bd7e.jpg",
+      "detect_ms": 1172.6944000110961,
+      "read_ms": 203.3211000089068,
+      "e2e_ms": 1376.015500020003,
+      "easyocr_ms": 1227.4079000053462
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784804118_6a61f3164f937.jpg",
+      "detect_ms": 1201.5790999867022,
+      "read_ms": 287.3078999982681,
+      "e2e_ms": 1488.8869999849703,
+      "easyocr_ms": 1405.7568999996874
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784804118_6a61f3164f937.jpg",
+      "detect_ms": 1239.8829000012483,
+      "read_ms": 197.42159999441355,
+      "e2e_ms": 1437.304499995662,
+      "easyocr_ms": 1287.2605999873485
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784804118_6a61f3164f937.jpg",
+      "detect_ms": 1150.5081999930553,
+      "read_ms": 182.57450000965036,
+      "e2e_ms": 1333.0827000027057,
+      "easyocr_ms": 1283.824599988293
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784803526_6a61f0c6a669a.jpg",
+      "detect_ms": 1149.1474999929778,
+      "read_ms": 184.15910002659075,
+      "e2e_ms": 1333.3066000195686,
+      "easyocr_ms": 1259.8742000118364
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784803526_6a61f0c6a669a.jpg",
+      "detect_ms": 2266.137800004799,
+      "read_ms": 187.7315000165254,
+      "e2e_ms": 2453.8693000213243,
+      "easyocr_ms": 1166.6675000160467
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784803526_6a61f0c6a669a.jpg",
+      "detect_ms": 1581.3219999836292,
+      "read_ms": 192.9283000063151,
+      "e2e_ms": 1774.2502999899443,
+      "easyocr_ms": 1215.6225000217091
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804100_6a61f30476da3.jpg",
+      "detect_ms": 856.825700000627,
+      "read_ms": 161.87619999982417,
+      "e2e_ms": 1018.7019000004511,
+      "easyocr_ms": 1767.750300001353
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804100_6a61f30476da3.jpg",
+      "detect_ms": 991.2500999926124,
+      "read_ms": 190.16969998483546,
+      "e2e_ms": 1181.4197999774478,
+      "easyocr_ms": 1906.6672000044491
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804100_6a61f30476da3.jpg",
+      "detect_ms": 964.3493999901693,
+      "read_ms": 159.4762000022456,
+      "e2e_ms": 1123.825599992415,
+      "easyocr_ms": 1748.7873999925796
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784641751_6a5f78d7cafe2.jpg",
+      "detect_ms": 856.2115000095218,
+      "read_ms": 139.24310001311824,
+      "e2e_ms": 995.4546000226401,
+      "easyocr_ms": 1627.8594000032172
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784641751_6a5f78d7cafe2.jpg",
+      "detect_ms": 916.0763999971095,
+      "read_ms": 174.59740000776947,
+      "e2e_ms": 1090.673800004879,
+      "easyocr_ms": 1842.9498999903444
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784641751_6a5f78d7cafe2.jpg",
+      "detect_ms": 870.1288000156637,
+      "read_ms": 145.03569999942556,
+      "e2e_ms": 1015.1645000150893,
+      "easyocr_ms": 1652.494600013597
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784641890_6a5f796238a9c.jpg",
+      "detect_ms": 843.8092000142206,
+      "read_ms": 139.91289999103174,
+      "e2e_ms": 983.7221000052523,
+      "easyocr_ms": 1685.9159999876283
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784641890_6a5f796238a9c.jpg",
+      "detect_ms": 846.4781999937259,
+      "read_ms": 143.13480001874268,
+      "e2e_ms": 989.6130000124685,
+      "easyocr_ms": 1734.4653999898583
+    },
+    {
+      "image": "public/uploads/vehicles/exit_1784641890_6a5f796238a9c.jpg",
+      "detect_ms": 842.3779000004288,
+      "read_ms": 152.6268000015989,
+      "e2e_ms": 995.0047000020277,
+      "easyocr_ms": 1657.5862000172492
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804415_6a61f43f88883.jpg",
+      "detect_ms": 705.9220999944955,
+      "read_ms": 247.42470000637695,
+      "e2e_ms": 953.3468000008725,
+      "easyocr_ms": 1213.6628000007477
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804415_6a61f43f88883.jpg",
+      "detect_ms": 678.403600002639,
+      "read_ms": 189.00579999899492,
+      "e2e_ms": 867.4094000016339,
+      "easyocr_ms": 1175.5069000064395
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804415_6a61f43f88883.jpg",
+      "detect_ms": 681.2862000078894,
+      "read_ms": 243.5477999970317,
+      "e2e_ms": 924.8340000049211,
+      "easyocr_ms": 1242.7696000086144
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804087_6a61f2f76a89c.jpg",
+      "detect_ms": 686.2130000081379,
+      "read_ms": 189.07200000830926,
+      "e2e_ms": 875.2850000164472,
+      "easyocr_ms": 705.5480999988504
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804087_6a61f2f76a89c.jpg",
+      "detect_ms": 662.5779999885708,
+      "read_ms": 165.59449999476783,
+      "e2e_ms": 828.1724999833386,
+      "easyocr_ms": 774.1301000060048
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804087_6a61f2f76a89c.jpg",
+      "detect_ms": 730.7715000060853,
+      "read_ms": 188.38209999375977,
+      "e2e_ms": 919.153599999845,
+      "easyocr_ms": 789.513200026704
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804069_6a61f2e5b18e0.jpg",
+      "detect_ms": 671.9282999983989,
+      "read_ms": 192.28330001351424,
+      "e2e_ms": 864.2116000119131,
+      "easyocr_ms": 1181.097699998645
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804069_6a61f2e5b18e0.jpg",
+      "detect_ms": 659.0620999922976,
+      "read_ms": 189.3368000164628,
+      "e2e_ms": 848.3989000087604,
+      "easyocr_ms": 1177.5800999894273
+    },
+    {
+      "image": "public/uploads/vehicles/entry_1784804069_6a61f2e5b18e0.jpg",
+      "detect_ms": 658.3288999972865,
+      "read_ms": 189.33419999666512,
+      "e2e_ms": 847.6630999939516,
+      "easyocr_ms": 1220.4612999921665
+    }
+  ]
+}

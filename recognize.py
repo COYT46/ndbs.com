@@ -76,14 +76,72 @@ def load_easyocr_reader():
     return _easyocr_reader
 
 
+def detect_plate(img_path, conf_thres=0.22):
+    """
+    Chỉ phát hiện khung biển (best.pt), KHÔNG đọc ký tự.
+    Trả: {success, detected, confidence, box?}
+    """
+    cv2, _YOLO = _bootstrap_cv_yolo()
+    plate_model, _read_model = load_models()
+
+    img = cv2.imread(img_path)
+    if img is None:
+        return {"success": False, "detected": False, "error": "Could not read image"}
+
+    h_img, w_img = img.shape[:2]
+    detect_img = img
+    detect_scale = 1.0
+    max_side = max(h_img, w_img)
+    if max_side > 1280:
+        detect_scale = 1280.0 / max_side
+        detect_img = cv2.resize(
+            img,
+            (int(w_img * detect_scale), int(h_img * detect_scale)),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    plate_results = plate_model(detect_img, conf=min(0.12, conf_thres), verbose=False, imgsz=640)
+    boxes = plate_results[0].boxes
+    if boxes is None or len(boxes) == 0:
+        return {"success": True, "detected": False, "confidence": 0.0}
+
+    best_box = max(boxes, key=lambda b: float(b.conf[0]))
+    confidence = float(best_box.conf[0])
+    if confidence < conf_thres:
+        return {"success": True, "detected": False, "confidence": confidence}
+
+    xyxy = best_box.xyxy[0].cpu().numpy() / detect_scale
+    x1, y1, x2, y2 = map(float, xyxy)
+    box_w = max(1.0, x2 - x1)
+    box_h = max(1.0, y2 - y1)
+    aspect = box_w / box_h
+    area_ratio = (box_w * box_h) / float(max(1, w_img * h_img))
+
+    # Biển VN thường ngang (1 dòng ~2-5, 2 dòng ~1.2-2.5); loại box quá kỳ
+    if aspect < 1.05 or aspect > 6.5:
+        return {"success": True, "detected": False, "confidence": confidence, "reason": "aspect"}
+    if area_ratio < 0.003:
+        return {"success": True, "detected": False, "confidence": confidence, "reason": "too_small"}
+
+    return {
+        "success": True,
+        "detected": True,
+        "confidence": confidence,
+        "box": [int(x1), int(y1), int(x2), int(y2)],
+        "area_ratio": round(area_ratio, 4),
+    }
+
+
 def recognize_plate(img_path):
-    """Nhận diện biển số từ đường dẫn ảnh. Trả dict {success, plate|error}."""
+    """Nhận diện biển số từ đường dẫn ảnh. Trả dict {success, plate|error}.
+    Bắt buộc detect được khung biển trước, rồi mới đọc ký tự.
+    """
     cv2, _YOLO = _bootstrap_cv_yolo()
     plate_model, read_model = load_models()
 
     img = cv2.imread(img_path)
     if img is None:
-        return {"success": False, "error": "Could not read image"}
+        return {"success": False, "error": "Could not read image", "stage": "load"}
 
     h_img, w_img = img.shape[:2]
 
@@ -395,33 +453,78 @@ def recognize_plate(img_path):
         normalized = normalize_plate_text(raw, raw_hint=raw)
         return normalized, score_plate_text(normalized, raw_hint=raw, mean_conf=0.3)
 
-    plate_results = plate_model(detect_img, conf=0.25, verbose=False, imgsz=640)
+    # --- Bước 1: bắt buộc thấy khung biển ---
+    DETECT_CONF = 0.22
+    plate_results = plate_model(detect_img, conf=0.12, verbose=False, imgsz=640)
     boxes = plate_results[0].boxes
 
-    crop_img = img
-    best_box = None
-    if len(boxes) > 0:
-        best_box = max(boxes, key=lambda b: float(b.conf[0]))
-        xyxy = best_box.xyxy[0].cpu().numpy() / detect_scale
-        x1, y1, x2, y2 = map(int, xyxy)
-        x1 = max(0, x1 - 8)
-        y1 = max(0, y1 - 8)
-        x2 = min(w_img, x2 + 8)
-        y2 = min(h_img, y2 + 8)
-        if x2 > x1 and y2 > y1:
-            crop_img = img[y1:y2, x1:x2]
+    if boxes is None or len(boxes) == 0:
+        return {
+            "success": False,
+            "error": "Chưa phát hiện biển số trong khung hình",
+            "stage": "detect",
+        }
+
+    best_box = max(boxes, key=lambda b: float(b.conf[0]))
+    det_conf = float(best_box.conf[0])
+    if det_conf < DETECT_CONF:
+        return {
+            "success": False,
+            "error": "Chưa chắc là biển số (độ tin cậy thấp)",
+            "stage": "detect",
+            "confidence": det_conf,
+        }
+
+    xyxy = best_box.xyxy[0].cpu().numpy() / detect_scale
+    x1, y1, x2, y2 = map(int, xyxy)
+    box_w = max(1, x2 - x1)
+    box_h = max(1, y2 - y1)
+    aspect = box_w / float(box_h)
+    area_ratio = (box_w * box_h) / float(max(1, w_img * h_img))
+    if aspect < 1.05 or aspect > 6.5 or area_ratio < 0.003:
+        return {
+            "success": False,
+            "error": "Đối tượng không giống biển số",
+            "stage": "detect",
+            "confidence": det_conf,
+        }
+
+    # --- Bước 2: crop biển rồi mới đọc ký tự ---
+    close_up = area_ratio >= 0.35
+    pad = 4 if close_up else 8
+    x1 = max(0, x1 - pad)
+    y1 = max(0, y1 - pad)
+    x2 = min(w_img, x2 + pad)
+    y2 = min(h_img, y2 + pad)
+    if x2 <= x1 or y2 <= y1:
+        return {
+            "success": False,
+            "error": "Khung biển không hợp lệ",
+            "stage": "detect",
+        }
+
+    crop_img = img[y1:y2, x1:x2]
+
+    ch, cw = crop_img.shape[:2]
+    if max(ch, cw) > 900:
+        scale = 900.0 / max(ch, cw)
+        crop_img = cv2.resize(
+            crop_img,
+            (max(1, int(cw * scale)), max(1, int(ch * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
 
     final_plate, final_score = recognize_fast(crop_img)
 
-    if (not is_valid_plate(final_plate)) and best_box is not None:
+    if not is_valid_plate(final_plate):
         xyxy = best_box.xyxy[0].cpu().numpy() / detect_scale
-        x1, y1, x2, y2 = map(int, xyxy)
-        x1 = max(0, x1 - 16)
-        y1 = max(0, y1 - 16)
-        x2 = min(w_img, x2 + 16)
-        y2 = min(h_img, y2 + 16)
-        if x2 > x1 and y2 > y1:
-            wider = img[y1:y2, x1:x2]
+        wx1, wy1, wx2, wy2 = map(int, xyxy)
+        wx1 = max(0, wx1 - 16)
+        wy1 = max(0, wy1 - 16)
+        wx2 = min(w_img, wx2 + 16)
+        wy2 = min(h_img, wy2 + 16)
+        if wx2 > wx1 and wy2 > wy1:
+            wider = img[wy1:wy2, wx1:wx2]
             wider_plate, wider_score = recognize_fast(wider)
             if wider_score > final_score:
                 final_plate, final_score = wider_plate, wider_score
@@ -432,9 +535,22 @@ def recognize_plate(img_path):
             final_plate, final_score = easy_plate, easy_score
 
     if not final_plate:
-        return {"success": False, "error": "Không đọc được chuỗi biển số từ ảnh"}
+        return {
+            "success": False,
+            "error": "Đã thấy biển nhưng chưa đọc được ký tự",
+            "stage": "ocr",
+        }
 
-    return {"success": True, "plate": final_plate}
+    if not is_valid_plate(final_plate):
+        return {
+            "success": False,
+            "error": "Đã thấy biển nhưng chuỗi ký tự chưa hợp lệ",
+            "stage": "ocr",
+            "plate_hint": final_plate,
+        }
+
+    return {"success": True, "plate": final_plate, "detect_confidence": det_conf}
+
 
 
 def main():
