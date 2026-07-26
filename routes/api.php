@@ -15,6 +15,7 @@ Route::middleware(['web', 'auth', 'session.release'])->group(function () {
         Route::post('/recognize-entry', [ApiController::class, 'recognizeEntry'])->name('api.recognize_entry');
         Route::post('/checkout-exit', [ApiController::class, 'checkoutExit'])->name('api.checkout_exit');
         Route::post('/validate-checkout', [ApiController::class, 'validateCheckout'])->name('api.validate_checkout');
+        Route::post('/retry-exit', [ApiController::class, 'retryExitAttempt'])->name('api.retry_exit');
         Route::get('/recent-logs', [ApiController::class, 'getRecentLogs'])->name('api.recent_logs');
         Route::post('/arm-exit-code', [ApiController::class, 'armExitCode'])->name('api.arm_exit_code');
         Route::post('/clear-exit-code', [ApiController::class, 'clearExitCode'])->name('api.clear_exit_code');

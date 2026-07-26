@@ -50,7 +50,13 @@
                             </div>
                         </div>
                         <div id="entry-error" class="mt-3" style="display: none;">
-                            <div class="alert alert-danger mb-0 p-2 small" id="entry-error-msg"></div>
+                            <div class="alert alert-danger border-danger shadow-sm mb-0 p-3">
+                                <h6 class="alert-heading fw-bold mb-1 text-danger">
+                                    <i class="material-icons-outlined align-middle">warning</i>
+                                    <span id="entry-error-title">Cảnh báo</span>
+                                </h6>
+                                <div class="fs-6 fw-semibold" id="entry-error-msg"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -101,6 +107,12 @@
                         <div id="exit-result" class="mt-3" style="display: none;">
                             <div class="alert mb-0 shadow-sm p-2" id="exit-alert-box">
                                 <h6 class="mb-0 fw-bold fs-6" id="exit-message"></h6>
+                                <small id="exit-auto-timer-wrap" class="text-muted mt-1 d-none" style="font-size: 11px;">
+                                    Tự động cho ra sau <span id="exit-auto-timer" class="fw-bold">10</span> giây...
+                                </small>
+                                <button type="button" id="btn-exit-retry-inline" class="btn btn-sm btn-outline-danger fw-bold mt-2" style="display: none;">
+                                    <i class="material-icons-outlined align-middle me-1" style="font-size: 16px;">refresh</i> Làm lại
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -150,9 +162,6 @@
                                 <i class="material-icons-outlined align-middle me-1">cancel</i> Không hợp lệ
                             </button>
                         </div>
-                        <small class="text-muted d-block text-center mt-2" style="font-size: 11px;">
-                            Hợp lệ → “Xe vào đã ra”. Không hợp lệ → giữ “Xe vào chưa ra”.
-                        </small>
                     </div>
                 </div>
             </div>
@@ -205,6 +214,7 @@ $(document).ready(function() {
         monitor: @json(route('api.guard_monitor', [], false)),
         armExit: @json(route('api.arm_exit_code', [], false)),
         clearExit: @json(route('api.clear_exit_code', [], false)),
+        retryExit: @json(route('api.retry_exit', [], false)),
         entry: @json(route('api.recognize_entry', [], false)),
         exit: @json(route('api.checkout_exit', [], false)),
         validate: @json(route('api.validate_checkout', [], false))
@@ -215,14 +225,24 @@ $(document).ready(function() {
         || (navigator.maxTouchPoints > 1 && window.innerWidth < 900);
 
     let entryTimerInterval = null;
+    let exitTimerInterval = null;
+    let autoExitInProgress = false;
     let currentLogId = null;
     let lastSeenEntryId = null;
     let lastSeenPendingId = null;
+    let lastSeenEntryAlertId = null;
     let monitorBootstrapped = false;
     let lastLiveEntryTs = 0;
     let lastLiveExitTs = 0;
     let entryShowingResult = false;
     let exitLockedByPending = false;
+
+    function clearExitTimer() {
+        if (exitTimerInterval) {
+            clearInterval(exitTimerInterval);
+            exitTimerInterval = null;
+        }
+    }
 
     function showNotificationModal(isSuccess, title, message) {
         if (isSuccess) {
@@ -237,32 +257,49 @@ $(document).ready(function() {
     }
 
     let lastArmedCode = '';
+    let lastArmFailedCode = '';
+
+    function markArmFailed(msg) {
+        lastArmedCode = '';
+        lastArmFailedCode = ($('#exit-code').val() || '').trim().toUpperCase();
+        $.post(API.clearExit);
+        $('#exit-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
+            .text((msg || 'Mã không hợp lệ') + ' — sửa mã rồi nhập lại');
+        const input = $('#exit-code')[0];
+        if (input) {
+            input.focus();
+            input.select();
+        }
+    }
+
     function armExitCodeIfReady() {
         const code = ($('#exit-code').val() || '').trim().toUpperCase();
         if (code.length !== 6) {
-            if (lastArmedCode) {
+            if (lastArmedCode || lastArmFailedCode) {
                 $.post(API.clearExit);
                 lastArmedCode = '';
-                $('#exit-code-arm-hint').removeClass('text-success').addClass('text-muted')
+                lastArmFailedCode = '';
+                $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
                     .text('Nhập mã 6 ký tự');
             }
             return;
         }
-        if (code === lastArmedCode) return;
+        // Đã kích hoạt OK, hoặc vừa fail cùng mã (tránh spam) — chỉ thử lại khi user sửa/xóa rồi nhập lại
+        if (code === lastArmedCode || code === lastArmFailedCode) return;
         $.post(API.armExit, { code: code })
             .done(function(res) {
                 if (res && res.success) {
                     lastArmedCode = code;
+                    lastArmFailedCode = '';
                     $('#exit-code-arm-hint').removeClass('text-muted text-danger').addClass('text-success')
                         .text('Đã kích hoạt — mã ' + code + (res.plate_number ? (' (' + res.plate_number + ')') : ''));
                 } else {
-                    $('#exit-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
-                        .text((res && res.message) || 'Không kích hoạt được mã này');
+                    markArmFailed((res && res.message) || 'Không kích hoạt được mã này');
                 }
             })
             .fail(function(xhr) {
                 const msg = (xhr.responseJSON && xhr.responseJSON.message) || 'Mã không hợp lệ';
-                $('#exit-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger').text(msg);
+                markArmFailed(msg);
             });
     }
 
@@ -320,16 +357,24 @@ $(document).ready(function() {
         lastLiveEntryTs = 0;
     }
 
-    function resetExitAndComparison() {
+    function resetExitAndComparison(opts) {
+        opts = opts || {};
+        clearExitTimer();
+        autoExitInProgress = false;
         $('#exit-file').data('locked', false);
         exitLockedByPending = false;
         $('#exit-file, #exit-code, #btn-exit-recognize').prop('disabled', false);
+        $('#btn-exit-recognize').html(exitBtnHtml(false));
         $('#exit-file').val('');
-        $('#exit-code').val('');
+        if (!opts.keepCode) {
+            $('#exit-code').val('');
+        }
         $('#exit-camera').hide().attr('src', '').css('object-fit', 'contain');
         $('#exit-live-badge').hide();
         $('#exit-placeholder').show();
         $('#exit-result').hide();
+        $('#exit-auto-timer-wrap').addClass('d-none');
+        $('#btn-exit-retry-inline').hide();
         $('#comp-entry-img, #comp-exit-img').hide().attr('src', '');
         $('#comp-entry-empty, #comp-exit-empty').show();
         $('#comp-entry-plate, #comp-exit-plate').text('-');
@@ -339,12 +384,66 @@ $(document).ready(function() {
         lastSeenPendingId = null;
         lastLiveExitTs = 0;
         lastArmedCode = '';
+        lastArmFailedCode = '';
         $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
-            .text('Nhập mã 6 ký tự');
+            .text(opts.keepCode ? 'Nhập đủ 6 ký tự hoặc sửa mã rồi thử lại' : 'Nhập mã 6 ký tự');
+        if (opts.focusCode) {
+            const input = $('#exit-code')[0];
+            if (input) {
+                input.focus();
+                input.select();
+            }
+        }
+    }
+
+    function autoApproveExit(logId) {
+        if (!logId || autoExitInProgress) return;
+        autoExitInProgress = true;
+        $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
+            .text('Đang xác nhận cho ra...');
+        $.post(API.validate, { log_id: logId, is_valid: true })
+            .done(function(res) {
+                if (res && res.success) {
+                    $('#exit-auto-timer-wrap').addClass('d-none');
+                    $('#exit-message').html(
+                        '<i class="material-icons-outlined align-middle me-1">check_circle</i> Đã cho phép xe ra!'
+                    );
+                    $('#comp-status-badge').text('Đã cho ra thành công');
+                    setTimeout(function() {
+                        resetExitAndComparison();
+                    }, 1500);
+                } else {
+                    autoExitInProgress = false;
+                    $('#exit-auto-timer-wrap').addClass('d-none');
+                    $('#validation-buttons').show();
+                    $('#comp-status-badge').removeClass('bg-success').addClass('bg-danger text-white')
+                        .text('Tự động cho ra thất bại — xác nhận thủ công');
+                    showNotificationModal(false, 'Không cho ra được', (res && res.message) || 'Vui lòng bấm Hợp lệ / Không hợp lệ.');
+                }
+            })
+            .fail(function(xhr) {
+                autoExitInProgress = false;
+                $('#exit-auto-timer-wrap').addClass('d-none');
+                $('#validation-buttons').show();
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) || 'Lỗi kết nối khi tự động cho ra.';
+                showNotificationModal(false, 'Lỗi tự động cho ra', msg);
+            });
+    }
+
+    function doRetryExit(keepCode) {
+        const payload = {};
+        if (currentLogId) payload.log_id = currentLogId;
+        $.post(API.retryExit, payload)
+            .always(function() {
+                resetExitAndComparison({ keepCode: !!keepCode, focusCode: true });
+                $('#exit-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
+                    .text('Đã hủy lượt ra — nhập lại mã để quét biển lại');
+            });
     }
 
     function showEntrySuccess(plate, code, imageUrl) {
         entryShowingResult = true;
+        $('#entry-error').hide();
         $('#entry-live-badge').hide();
         if (imageUrl) {
             $('#entry-placeholder').hide();
@@ -366,7 +465,42 @@ $(document).ready(function() {
         }, 1000);
     }
 
+    function showAlreadyInsideAlert(alert, opts) {
+        opts = opts || {};
+        if (!alert) return;
+        if (entryTimerInterval) clearInterval(entryTimerInterval);
+        entryShowingResult = true;
+        $('#entry-result').hide();
+        $('#entry-live-badge').hide();
+
+        if (alert.entry_image) {
+            $('#entry-placeholder').hide();
+            $('#entry-camera').attr('src', alert.entry_image).css('object-fit', 'contain').show();
+        }
+
+        $('#entry-error-title').text('Xe vẫn nằm trong bãi');
+        $('#entry-error-msg').text(alert.message || 'Xe này chưa ra khỏi bãi — không thể nhận diện vào lần nữa.');
+        $('#entry-error').show();
+
+        // Máy tính bắt buộc hiện modal
+        if (opts.modal !== false) {
+            showNotificationModal(false, 'Xe vẫn nằm trong bãi', alert.message || 'Xe này chưa ra khỏi bãi.');
+        }
+
+        // Tự ẩn sau 12s để không che lượt tiếp theo
+        setTimeout(function() {
+            if ($('#entry-error').is(':visible')) {
+                resetEntryUi();
+            }
+        }, 12000);
+    }
+
     function showPendingValidation(data) {
+        // Đang đếm giây / đang tự cho ra cùng lượt → bỏ qua poll lặp lại
+        if (autoExitInProgress && currentLogId && data.log_id === currentLogId) return;
+        if (exitTimerInterval && currentLogId && data.log_id === currentLogId && data.match) return;
+
+        clearExitTimer();
         currentLogId = data.log_id;
         lastSeenPendingId = data.log_id;
         exitLockedByPending = true;
@@ -385,19 +519,60 @@ $(document).ready(function() {
         $('#comp-exit-plate').text(data.exit_plate || '-');
 
         const alertBox = $('#exit-alert-box');
+        $('#btn-exit-retry-inline').hide();
+        $('#exit-file, #exit-code, #btn-exit-recognize').prop('disabled', true);
+        $('#exit-file').data('locked', true);
+        $('#exit-result').show();
+
         if (data.match) {
+            // Biển khớp → đếm giây rồi tự động cho ra (giống làm mới sau xe vào)
             alertBox.removeClass('alert-danger alert-info').addClass('alert-success');
-            $('#exit-message').html('<i class="material-icons-outlined align-middle me-1">check_circle</i> ' + (data.message || ''));
-            $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white').text('BSX trùng khớp — xác nhận cho ra?');
+            $('#exit-message').html(
+                '<i class="material-icons-outlined align-middle me-1">check_circle</i> Biển số khớp: <strong>' +
+                (data.exit_plate || data.entry_plate || '') + '</strong>'
+            );
+            $('#validation-buttons').hide();
+            let seconds = 10;
+            $('#exit-auto-timer').text(seconds);
+            $('#exit-auto-timer-wrap').removeClass('d-none');
+            $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
+                .text('Biển khớp — tự động cho ra sau ' + seconds + 's');
+            exitTimerInterval = setInterval(function() {
+                seconds--;
+                $('#exit-auto-timer').text(seconds);
+                $('#comp-status-badge').text('Biển khớp — tự động cho ra sau ' + seconds + 's');
+                if (seconds <= 0) {
+                    clearExitTimer();
+                    autoApproveExit(data.log_id);
+                }
+            }, 1000);
         } else {
             alertBox.removeClass('alert-success alert-info').addClass('alert-danger');
             $('#exit-message').html('<i class="material-icons-outlined align-middle me-1">warning</i> ' + (data.message || ''));
-            $('#comp-status-badge').removeClass('bg-warning bg-success text-dark').addClass('bg-danger text-white').text('BSX không trùng — vẫn cần xác nhận');
+            $('#exit-auto-timer-wrap').addClass('d-none');
+            $('#comp-status-badge').removeClass('bg-warning bg-success text-dark').addClass('bg-danger text-white')
+                .text('BSX không trùng — cần xác nhận thủ công');
+            $('#validation-buttons').show();
         }
+    }
+
+    function showExitError(message) {
+        exitLockedByPending = false;
+        $('#exit-file').data('locked', false);
+        $('#exit-file, #exit-code, #btn-exit-recognize').prop('disabled', false);
+        $('#btn-exit-recognize').html(exitBtnHtml(false));
+        const alertBox = $('#exit-alert-box');
+        alertBox.removeClass('alert-success alert-info').addClass('alert-danger');
+        $('#exit-message').html(
+            '<i class="material-icons-outlined align-middle me-1">error</i> ' +
+            (message || 'Có lỗi xảy ra') +
+            '<div class="small fw-normal mt-1">Bạn có thể sửa mã / chọn ảnh khác rồi nhận diện lại.</div>'
+        );
+        $('#btn-exit-retry-inline').show();
         $('#exit-result').show();
-        $('#validation-buttons').show();
-        $('#exit-file, #exit-code, #btn-exit-recognize').prop('disabled', true);
-        $('#exit-file').data('locked', true);
+        $('#validation-buttons').hide();
+        $('#comp-status-badge').removeClass('bg-success bg-danger text-white').addClass('bg-warning text-dark')
+            .text('Lỗi — có thể làm lại');
     }
 
     function entryBtnHtml(busy) {
@@ -427,14 +602,24 @@ $(document).ready(function() {
                 if (response.success) {
                     showEntrySuccess(response.plate_number, response.code, response.image_url || null);
                     if (response.log_id) lastSeenEntryId = response.log_id;
+                } else if (response.already_inside) {
+                    if (response.id) lastSeenEntryAlertId = String(response.id);
+                    showAlreadyInsideAlert(response);
                 } else {
+                    $('#entry-error-title').text('Lỗi nhận diện');
                     $('#entry-error-msg').text(response.message || 'Có lỗi xảy ra!');
                     $('#entry-error').fadeIn();
                 }
             },
             error: function(xhr) {
+                const body = xhr.responseJSON || {};
+                if (body.already_inside) {
+                    if (body.id) lastSeenEntryAlertId = String(body.id);
+                    showAlreadyInsideAlert(body);
+                    return;
+                }
                 let msg = 'Lỗi kết nối máy chủ (HTTP ' + xhr.status + ').';
-                if (xhr.responseJSON && xhr.responseJSON.message) msg += '\nChi tiết: ' + xhr.responseJSON.message;
+                if (body.message) msg += '\nChi tiết: ' + body.message;
                 showNotificationModal(false, 'Lỗi Kết Nối Máy Chủ', msg);
             },
             complete: function() {
@@ -449,6 +634,7 @@ $(document).ready(function() {
         fd.append('code', codeVal);
         const btn = $('#btn-exit-recognize');
         btn.prop('disabled', true).html(exitBtnHtml(true));
+        $('#btn-exit-retry-inline').hide();
         $.ajax({
             url: API.exit,
             type: 'POST',
@@ -468,17 +654,20 @@ $(document).ready(function() {
                         message: response.message
                     });
                 } else {
-                    const alertBox = $('#exit-alert-box');
-                    alertBox.removeClass('alert-success alert-info').addClass('alert-danger');
-                    $('#exit-message').text(response.message || 'Có lỗi xảy ra');
-                    $('#exit-result').show();
-                    $('#validation-buttons').hide();
+                    // Sai mã → bỏ kích hoạt cũ; lỗi biển → vẫn mở khóa để làm lại
+                    if (!response.keep_armed) {
+                        lastArmedCode = '';
+                        lastArmFailedCode = codeVal;
+                        $.post(API.clearExit);
+                    }
+                    showExitError(response.message || 'Có lỗi xảy ra');
                 }
             },
             error: function(xhr) {
                 let msg = 'Lỗi kết nối máy chủ (HTTP ' + xhr.status + ').';
-                if (xhr.responseJSON && xhr.responseJSON.message) msg += '\nChi tiết: ' + xhr.responseJSON.message;
-                showNotificationModal(false, 'Lỗi Kết Nối Máy Chủ', msg);
+                if (xhr.responseJSON && xhr.responseJSON.message) msg = xhr.responseJSON.message;
+                lastArmedCode = '';
+                showExitError(msg);
             },
             complete: function() {
                 if (!$('#exit-file').prop('disabled')) {
@@ -503,6 +692,9 @@ $(document).ready(function() {
                     if (res.pending_validation && res.pending_validation.log_id) {
                         lastSeenPendingId = res.pending_validation.log_id;
                     }
+                    if (res.entry_alert && res.entry_alert.id) {
+                        lastSeenEntryAlertId = String(res.entry_alert.id);
+                    }
                     if (res.armed_exit_code) {
                         lastArmedCode = String(res.armed_exit_code).toUpperCase();
                         $('#exit-code-arm-hint').removeClass('text-muted text-danger').addClass('text-success')
@@ -510,6 +702,13 @@ $(document).ready(function() {
                     }
                     monitorBootstrapped = true;
                     return;
+                }
+
+                // Cảnh báo "xe vẫn trong bãi" từ ĐT/PC → bắt buộc hiện trên máy tính
+                const entryAlert = res.entry_alert;
+                if (entryAlert && entryAlert.id && String(entryAlert.id) !== String(lastSeenEntryAlertId || '')) {
+                    lastSeenEntryAlertId = String(entryAlert.id);
+                    showAlreadyInsideAlert(entryAlert);
                 }
 
                 const entry = res.last_entry;
@@ -534,12 +733,15 @@ $(document).ready(function() {
                 }
 
                 // Nếu mã còn trên ô nhập mà server mất kích hoạt (lỗi/hết hạn) → kích hoạt lại để ĐT quét tiếp
+                // Không tự kích hoạt lại mã vừa fail (user phải sửa/xóa rồi nhập lại)
                 const codeNow = ($('#exit-code').val() || '').trim().toUpperCase();
-                if (codeNow.length === 6 && !res.armed_exit_code && !pending && !$('#exit-file').data('locked')) {
+                if (codeNow.length === 6 && !res.armed_exit_code && !pending && !$('#exit-file').data('locked')
+                    && codeNow !== lastArmFailedCode) {
                     if (lastArmedCode === codeNow) lastArmedCode = '';
                     armExitCodeIfReady();
                 } else if (res.armed_exit_code) {
                     lastArmedCode = String(res.armed_exit_code).toUpperCase();
+                    lastArmFailedCode = '';
                     $('#exit-code-arm-hint').removeClass('text-muted text-danger').addClass('text-success')
                         .text('Đã kích hoạt — mã ' + lastArmedCode);
                 }
@@ -592,6 +794,10 @@ $(document).ready(function() {
             return;
         }
         showNotificationModal(false, 'Chưa có ảnh', 'Chọn ảnh từ máy, hoặc dùng ĐT quét xe ra.');
+    });
+
+    $('#btn-exit-retry-inline').click(function() {
+        doRetryExit(false);
     });
 
     let pendingValidationAction = null;

@@ -341,6 +341,16 @@ $(document).ready(function() {
                     $('#scan-result').fadeOut();
                     resumeAfterAttempt(1500);
                 }, 4000);
+            } else if (res && res.already_inside) {
+                showResult(false,
+                    '<strong>Xe vẫn trong bãi</strong><br>' +
+                    (res.message || 'Biển này chưa ra khỏi bãi — không thể vào lại.')
+                );
+                setStatus('Xe vẫn trong bãi — chờ xe khác...');
+                setTimeout(function() {
+                    $('#scan-result').fadeOut();
+                    resumeAfterAttempt(2500);
+                }, 4500);
             } else {
                 showResult(false, (res && res.message) || 'Nhận diện thất bại — sẽ quét lại');
                 setStatus('Lỗi — đang quét lại...');
@@ -353,11 +363,18 @@ $(document).ready(function() {
         });
     }
 
+    function waitForNewCode(msg) {
+        armedCode = null;
+        liveStarted = false;
+        busy = false;
+        scanning = false;
+        showResult(false, msg || 'Sai mã / lỗi — chờ máy tính nhập lại mã');
+        setStatus('Chờ quẹt mã (nhập trên máy tính)...');
+    }
+
     function submitExit(blob, code, plateHint) {
         if (!code) {
-            showResult(false, 'Mất mã code — chờ máy tính nhập lại');
-            setStatus('Chờ quẹt mã (nhập trên máy tính)...');
-            resumeAfterAttempt(1000);
+            waitForNewCode('Mất mã code — chờ máy tính nhập lại');
             return;
         }
         armedCode = code;
@@ -377,7 +394,7 @@ $(document).ready(function() {
                 liveStarted = false;
                 showResult(true,
                     '<strong>Đã gửi đối chiếu</strong><br>Biển ra: <b>' + (res.exit_plate || plateHint) +
-                    '</b><br>Máy tính xác nhận Hợp lệ / Không hợp lệ'
+                    '</b><br>Máy tính: biển khớp sẽ tự cho ra'
                 );
                 setStatus('Xong — chờ mã code tiếp theo...');
                 setTimeout(function() {
@@ -385,15 +402,26 @@ $(document).ready(function() {
                     resumeAfterAttempt(1500);
                 }, 3500);
             } else {
-                showResult(false, (res && res.message) || 'Đối chiếu thất bại — sẽ quét lại');
-                setStatus('Mã ' + code + ' — lỗi, đang quét lại...');
-                resumeAfterAttempt(RETRY_MS);
+                const msg = (res && res.message) || 'Đối chiếu thất bại';
+                // Sai mã / bị clear trên PC → chờ nhập lại. Lỗi biển (keep_armed) → quét lại.
+                if (res && res.keep_armed) {
+                    showResult(false, msg + ' — đang quét lại biển...');
+                    setStatus('Mã ' + code + ' — lỗi biển, đang quét lại...');
+                    resumeAfterAttempt(RETRY_MS);
+                } else {
+                    waitForNewCode(msg);
+                }
             }
         }).fail(function(xhr) {
-            const msg = (xhr.responseJSON && xhr.responseJSON.message) || 'Lỗi kết nối máy chủ — sẽ quét lại';
-            showResult(false, msg);
-            setStatus('Mã ' + code + ' — lỗi, đang quét lại...');
-            resumeAfterAttempt(RETRY_MS);
+            const body = xhr.responseJSON || {};
+            const msg = body.message || 'Lỗi kết nối máy chủ';
+            if (body.keep_armed) {
+                showResult(false, msg + ' — đang quét lại biển...');
+                setStatus('Mã ' + code + ' — lỗi, đang quét lại...');
+                resumeAfterAttempt(RETRY_MS);
+            } else {
+                waitForNewCode(msg + ' — chờ nhập lại mã trên máy tính');
+            }
         });
     }
 

@@ -525,23 +525,46 @@ class ApiController extends Controller
             }
 
             $plate = strtoupper($aiResult['plate']);
+            $cleanPlate = preg_replace('/[^A-Z0-9]/i', '', $plate);
 
-            // Tránh tạo 2 log liên tiếp cùng biển (ĐT + PC cùng LIVE)
-            $recent = VehicleLog::where('plate_number', $plate)
-                ->where('status', 'in')
-                ->where('entry_time', '>=', now()->subSeconds(30))
-                ->latest('id')
-                ->first();
-            if ($recent) {
-                return response()->json([
-                    'success' => true,
-                    'log_id' => $recent->id,
-                    'plate_number' => $recent->plate_number,
-                    'code' => $recent->code,
-                    'image_url' => $recent->entry_image ? asset($recent->entry_image) : null,
-                    'message' => 'Xe vừa được nhận diện (trùng trong 30s).',
-                    'deduped' => true,
-                ]);
+            // Xe vẫn còn trong bãi (chưa ra) → không cho nhận diện vào lần nữa
+            $stillInside = null;
+            if ($cleanPlate !== '') {
+                $stillInside = VehicleLog::where('status', 'in')
+                    ->whereRaw(
+                        "REPLACE(REPLACE(REPLACE(UPPER(plate_number), '-', ''), ' ', ''), '.', '') = ?",
+                        [$cleanPlate]
+                    )
+                    ->latest('id')
+                    ->first();
+            }
+            if ($stillInside) {
+                @unlink($fullPath);
+                $entryAt = $stillInside->entry_time
+                    ? \Carbon\Carbon::parse($stillInside->entry_time)->format('d/m/Y H:i')
+                    : null;
+                $message = 'Xe biển ' . $stillInside->plate_number
+                    . ' vẫn đang nằm trong bãi'
+                    . ($stillInside->code ? (' (mã ' . $stillInside->code . ')') : '')
+                    . ($entryAt ? (', vào lúc ' . $entryAt) : '')
+                    . '. Cần nhận diện xe ra trước khi vào lại.';
+
+                $alert = [
+                    'type' => 'already_inside',
+                    'log_id' => $stillInside->id,
+                    'plate_number' => $stillInside->plate_number,
+                    'code' => $stillInside->code,
+                    'entry_time' => $entryAt,
+                    'entry_image' => $stillInside->entry_image ? asset($stillInside->entry_image) : null,
+                    'message' => $message,
+                ];
+                // Đẩy lên PC giám sát (kể cả khi quét từ ĐT)
+                $this->writeEntryAlert($alert);
+
+                return response()->json(array_merge([
+                    'success' => false,
+                    'already_inside' => true,
+                ], $alert));
             }
 
             // Generate a 6-character code (2 letters, 4 numbers)
@@ -605,9 +628,12 @@ class ApiController extends Controller
                 ->first();
 
             if (!$log) {
+                // Sai mã → tắt kích hoạt để PC/ĐT nhập lại từ đầu
+                $this->clearArmedExitCodeStorage();
                 return response()->json([
                     'success' => false,
-                    'message' => 'Không tìm thấy xe chưa ra với mã code: ' . $code
+                    'message' => 'Không tìm thấy xe chưa ra với mã code: ' . $code . '. Hãy nhập lại mã.',
+                    'retryable' => true,
                 ]);
             }
 
@@ -627,9 +653,13 @@ class ApiController extends Controller
             // Run AI Recognition on Exit Image
             $aiResult = $this->runRecognition($fullPath);
             if (!$aiResult['success']) {
+                @unlink($fullPath);
+                // Giữ mã đã kích hoạt để ĐT quét lại biển; báo retryable cho UI
                 return response()->json([
                     'success' => false,
-                    'message' => 'Lỗi nhận diện ảnh ra: ' . $aiResult['error']
+                    'message' => 'Lỗi nhận diện ảnh ra: ' . $aiResult['error'] . '. Có thể quét lại.',
+                    'retryable' => true,
+                    'keep_armed' => true,
                 ]);
             }
 
@@ -712,17 +742,47 @@ class ApiController extends Controller
             ]);
         }
 
-        // Không hợp lệ → giữ trong danh sách "Xe vào chưa ra"
+        // Không hợp lệ → giữ trong danh sách "Xe vào chưa ra", xóa ảnh ra để có thể quét lại
         $log->update([
             'status' => 'in',
             'exit_time' => null,
+            'exit_image' => null,
+            'exit_plate_number' => null,
             'is_valid' => false,
             'guard_out_id' => auth()->id()
         ]);
+        $this->clearArmedExitCodeStorage();
 
         return response()->json([
             'success' => true,
-            'message' => 'Đã xác nhận Không hợp lệ! Xe vẫn nằm trong danh sách xe vào chưa ra.'
+            'message' => 'Đã xác nhận Không hợp lệ! Có thể nhập lại mã để quét xe ra lại.'
+        ]);
+    }
+
+    /**
+     * Hủy lượt đối chiếu xe ra (sai mã / biển lỗi) → cho phép nhập mã và quét lại.
+     */
+    public function retryExitAttempt(Request $request)
+    {
+        $logId = $request->input('log_id');
+        if ($logId) {
+            $log = VehicleLog::find($logId);
+            if ($log && $log->status === 'in' && $log->is_valid === null && $log->exit_image) {
+                $log->update([
+                    'exit_time' => null,
+                    'exit_image' => null,
+                    'exit_plate_number' => null,
+                    'is_valid' => null,
+                    'guard_out_id' => null,
+                ]);
+            }
+        }
+
+        $this->clearArmedExitCodeStorage();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Đã hủy lượt ra. Nhập lại mã code để quét biển lại.',
         ]);
     }
 
@@ -830,6 +890,7 @@ class ApiController extends Controller
             'last_entry' => $entryPayload,
             'pending_validation' => $pendingPayload,
             'armed_exit_code' => $this->readArmedExitCode(),
+            'entry_alert' => $this->readEntryAlert(),
             'live_preview' => [
                 'entry' => $this->readLivePreview('entry'),
                 'exit' => $this->readLivePreview('exit'),
@@ -897,6 +958,78 @@ class ApiController extends Controller
             'success' => true,
             'armed_exit_code' => $this->readArmedExitCode(),
         ], 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
+    }
+
+    private function entryAlertPath()
+    {
+        $dir = storage_path('app');
+        if (!file_exists($dir)) {
+            @mkdir($dir, 0777, true);
+        }
+        return $dir . DIRECTORY_SEPARATOR . 'entry_alert.json';
+    }
+
+    private function writeEntryAlert(array $payload)
+    {
+        $payload['id'] = $payload['id'] ?? ('ea_' . time() . '_' . uniqid());
+        $payload['ts'] = time();
+        file_put_contents($this->entryAlertPath(), json_encode($payload, JSON_UNESCAPED_UNICODE));
+        try {
+            \Illuminate\Support\Facades\Cache::put('entry_alert', $payload, 90);
+        } catch (\Throwable $e) {
+            // ignore
+        }
+    }
+
+    private function readEntryAlert()
+    {
+        $data = null;
+        try {
+            $cached = \Illuminate\Support\Facades\Cache::get('entry_alert');
+            if (is_array($cached) && !empty($cached['id'])) {
+                $data = $cached;
+            }
+        } catch (\Throwable $e) {
+            // fall through
+        }
+
+        if (!$data) {
+            $path = $this->entryAlertPath();
+            if (!is_file($path)) {
+                return null;
+            }
+            $data = json_decode(@file_get_contents($path), true);
+            if (!is_array($data) || empty($data['id'])) {
+                return null;
+            }
+        }
+
+        $age = time() - (int) ($data['ts'] ?? 0);
+        // Chỉ hiện trên PC trong ~60s sau khi phát sinh
+        if ($age > 60) {
+            $path = $this->entryAlertPath();
+            if (is_file($path)) {
+                @unlink($path);
+            }
+            try {
+                \Illuminate\Support\Facades\Cache::forget('entry_alert');
+            } catch (\Throwable $e) {
+                // ignore
+            }
+            return null;
+        }
+
+        return [
+            'id' => (string) $data['id'],
+            'type' => $data['type'] ?? 'already_inside',
+            'log_id' => $data['log_id'] ?? null,
+            'plate_number' => $data['plate_number'] ?? null,
+            'code' => $data['code'] ?? null,
+            'entry_time' => $data['entry_time'] ?? null,
+            'entry_image' => $data['entry_image'] ?? null,
+            'message' => $data['message'] ?? 'Xe vẫn đang nằm trong bãi.',
+            'ts' => (int) ($data['ts'] ?? 0),
+        ];
     }
 
     private function armedExitCodePath()
@@ -996,9 +1129,11 @@ class ApiController extends Controller
             ->first();
 
         if (!$log) {
+            $this->clearArmedExitCodeStorage();
             return response()->json([
                 'success' => false,
-                'message' => 'Không tìm thấy xe chưa ra với mã: ' . $code,
+                'message' => 'Không tìm thấy xe chưa ra với mã: ' . $code . '. Hãy nhập lại.',
+                'retryable' => true,
             ], 404);
         }
 

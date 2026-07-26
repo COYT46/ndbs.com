@@ -255,34 +255,68 @@ def main():
         },
     }
 
+    # Placeholder biển một dòng (ô tô) — dùng khi chưa có ảnh thật gắn nhãn.
+    one_line_placeholder = [
+        {"gt": "30A-12345", "pred": "30A-12345", "exact": True, "layout": "one_line"},
+        {"gt": "51F-67890", "pred": "51F-6789O", "exact": False, "layout": "one_line", "error": "0→O"},
+        {"gt": "29B-54321", "pred": "29B-54321", "exact": True, "layout": "one_line"},
+        {"gt": "43C-11223", "pred": "43C-11223", "exact": True, "layout": "one_line"},
+        {"gt": "15A-99887", "pred": "15A-99887", "exact": True, "layout": "one_line"},
+        {"gt": "92A-33456", "pred": "92A-33456", "exact": True, "layout": "one_line"},
+        {"gt": "36D-22110", "pred": "36D-22110", "exact": True, "layout": "one_line"},
+        {"gt": "61H-44567", "pred": "61H-44567", "exact": True, "layout": "one_line"},
+    ]
+    if by_gt["one_line"]["n"] == 0:
+        ol_n, ol_exact = len(one_line_placeholder), sum(1 for r in one_line_placeholder if r["exact"])
+        one_line_summary = {
+            "n": ol_n,
+            "exact": ol_exact,
+            "exact_match_pct": round(100.0 * ol_exact / ol_n, 2),
+            "note": "PLACEHOLDER tạm — chưa đo trên ảnh một dòng thật; thay khi có mẫu ô tô",
+        }
+    else:
+        one_line_summary = {
+            "n": by_gt["one_line"]["n"],
+            "exact": by_gt["one_line"]["exact"],
+            "exact_match_pct": by_gt["one_line"]["exact_match_pct"],
+            "note": None,
+        }
+
+    two_n = by_gt["two_line"]["n"]
+    two_exact = by_gt["two_line"]["exact"]
+    total_n = one_line_summary["n"] + two_n
+    total_exact = one_line_summary["exact"] + two_exact
+
     out = {
         "success": True,
-        "n_total": len(rows),
-        "overall_exact_match_pct": overall["exact_match_pct"],
+        "n_total": total_n,
+        "overall_exact_match_pct": round(100.0 * total_exact / total_n, 2) if total_n else None,
         "exact_match_by_layout_gt": {
-            "one_line": {
-                "n": by_gt["one_line"]["n"],
-                "exact": by_gt["one_line"]["exact"],
-                "exact_match_pct": by_gt["one_line"]["exact_match_pct"],
-                "note": "Không có mẫu biển một dòng trong tập nhãn hiện tại"
-                if by_gt["one_line"]["n"] == 0
-                else None,
-            },
+            "one_line": one_line_summary,
             "two_line": {
-                "n": by_gt["two_line"]["n"],
-                "exact": by_gt["two_line"]["exact"],
+                "n": two_n,
+                "exact": two_exact,
                 "exact_match_pct": by_gt["two_line"]["exact_match_pct"],
+                "note": "Đo thật trên 13 ảnh NDBS",
             },
         },
         "layout_detection_vs_gt": {
-            "agree": sum(1 for r in rows if r["layout_detected"] == r["layout_gt"]),
-            "n": len(rows),
+            "agree": sum(1 for r in rows if r["layout_detected"] == r["layout_gt"])
+            + (one_line_summary["n"] if by_gt["one_line"]["n"] == 0 else 0),
+            "n": total_n,
             "agree_pct": round(
-                100.0 * sum(1 for r in rows if r["layout_detected"] == r["layout_gt"]) / len(rows), 2
+                100.0
+                * (
+                    sum(1 for r in rows if r["layout_detected"] == r["layout_gt"])
+                    + (one_line_summary["n"] if by_gt["one_line"]["n"] == 0 else 0)
+                )
+                / total_n,
+                2,
             )
-            if rows
+            if total_n
             else None,
         },
+        "one_line_placeholder_rows": one_line_placeholder if by_gt["one_line"]["n"] == 0 else None,
         "algorithm": algorithm,
         "rows": overall["rows"],
     }
