@@ -32,6 +32,14 @@ Route::middleware(['auth'])->group(function () {
             return view('guard.dashboard');
         })->name('guard.dashboard');
 
+        // Trang nhận diện bằng ảnh (upload)
+        Route::get('/recognize', function () {
+            if (auth()->user()->role !== 'guard') {
+                return redirect('/');
+            }
+            return view('guard.recognize');
+        })->name('guard.recognize');
+
         // Trang quét ĐT: mở là tự camera + tự nhận diện (không bấm)
         Route::get('/scan/{side}', function ($side) {
             if (auth()->user()->role !== 'guard') {

@@ -193,6 +193,9 @@
                                                             </div>
                                                             <ul class="list-group list-group-flush fs-6">
                                                                 <li class="list-group-item d-flex justify-content-between">
+                                                                    <span>Xác nhận:</span> <span class="badge bg-success">Hợp lệ</span>
+                                                                </li>
+                                                                <li class="list-group-item d-flex justify-content-between">
                                                                     <span>BSX ra:</span> <strong class="text-success fs-5">{{ $log->exit_plate_number ?? $log->plate_number }}</strong>
                                                                 </li>
                                                                 <li class="list-group-item d-flex justify-content-between">
@@ -200,9 +203,6 @@
                                                                 </li>
                                                                 <li class="list-group-item d-flex justify-content-between">
                                                                     <span>Bảo vệ check-out:</span> <strong class="text-dark">{{ $log->guardOut->fullname ?? 'N/A' }}</strong>
-                                                                </li>
-                                                                <li class="list-group-item d-flex justify-content-between">
-                                                                    <span>Xác nhận:</span> <span class="badge bg-success">Hợp lệ</span>
                                                                 </li>
                                                             </ul>
                                                         </div>
@@ -375,10 +375,10 @@
                                                         ${exitImgTag}
                                                     </div>
                                                     <ul class="list-group list-group-flush fs-6">
+                                                        <li class="list-group-item d-flex justify-content-between"><span>Xác nhận:</span> <span class="badge bg-success">Hợp lệ</span></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>BSX ra:</span> <strong class="text-success fs-5">${log.exit_plate_number || log.plate_number}</strong></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>Thời gian ra:</span> <span>${log.exit_time || '-'}</span></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>Bảo vệ check-out:</span> <strong class="text-dark">${log.guard_out}</strong></li>
-                                                        <li class="list-group-item d-flex justify-content-between"><span>Xác nhận:</span> <span class="badge bg-success">Hợp lệ</span></li>
                                                     </ul>
                                                 </div>
                                             </div>

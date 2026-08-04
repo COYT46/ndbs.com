@@ -100,6 +100,11 @@
                                 <div class="menu-title">Giám sát Xe ra vào</div>
                             </a>
                             <ul>
+                                <li class="{{ request()->routeIs('guard.recognize') ? 'mm-active' : '' }}">
+                                    <a href="{{ route('guard.recognize') }}">
+                                        <div class="menu-title">Nhận diện bằng ảnh</div>
+                                    </a>
+                                </li>
                                 <li class="{{ request()->routeIs('guard.dashboard') ? 'mm-active' : '' }}">
                                     <a href="{{ route('guard.dashboard') }}">
                                         <div class="menu-title">Màn hình giám sát</div>
@@ -107,12 +112,12 @@
                                 </li>
                                 <li class="{{ request()->is('guard/scan/entry') ? 'mm-active' : '' }}">
                                     <a href="{{ route('guard.scan', ['side' => 'entry']) }}">
-                                        <div class="menu-title">Nhận diện xe vào</div>
+                                        <div class="menu-title">Camera ĐT — xe vào</div>
                                     </a>
                                 </li>
                                 <li class="{{ request()->is('guard/scan/exit') ? 'mm-active' : '' }}">
                                     <a href="{{ route('guard.scan', ['side' => 'exit']) }}">
-                                        <div class="menu-title">Nhận diện xe ra</div>
+                                        <div class="menu-title">Camera ĐT — xe ra</div>
                                     </a>
                                 </li>
                             </ul>

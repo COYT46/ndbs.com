@@ -46,3 +46,6 @@ runs/
 
 /public/uploads/vehicles/*
 !/public/uploads/vehicles/.gitkeep
+
+/public/uploads/live/*
+!/public/uploads/live/.gitkeep
