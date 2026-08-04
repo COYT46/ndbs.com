@@ -23,6 +23,7 @@ Route::middleware(['web', 'auth', 'session.release'])->group(function () {
 
     // LIVE + poll mã: gọi liên tục, đã nhả session sớm
     Route::post('/live-preview', [ApiController::class, 'uploadLivePreview'])->name('api.live_preview');
+    Route::get('/live-status', [ApiController::class, 'livePreviewStatus'])->name('api.live_status');
     Route::get('/guard-monitor', [ApiController::class, 'guardMonitorState'])->name('api.guard_monitor');
     Route::get('/armed-exit-code', [ApiController::class, 'armedExitCodeStatus'])->name('api.armed_exit_code');
 });

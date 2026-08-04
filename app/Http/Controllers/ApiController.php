@@ -917,35 +917,83 @@ class ApiController extends Controller
 
         $filename = $side . '.jpg';
         $fullPath = $dir . DIRECTORY_SEPARATOR . $filename;
+        $tmpPath = $dir . DIRECTORY_SEPARATOR . $side . '.uploading.jpg';
+        $metaPath = $dir . DIRECTORY_SEPARATOR . $side . '.json';
+
+        // Ghi file tạm rồi rename — tránh đọc ảnh nửa chừng
+        if (is_file($tmpPath)) {
+            @unlink($tmpPath);
+        }
+        $request->file('image')->move($dir, $side . '.uploading.jpg');
         if (is_file($fullPath)) {
             @unlink($fullPath);
         }
-        $request->file('image')->move($dir, $filename);
-        @touch($fullPath);
+        @rename($tmpPath, $fullPath);
 
-        $ts = time();
+        // Timestamp ms (Windows filemtime chỉ ~1s → LIVE bị giật/lag)
+        $ts = (int) round(microtime(true) * 1000);
+        @file_put_contents($metaPath, json_encode(['ts' => $ts], JSON_UNESCAPED_SLASHES));
+
+        $url = '/public/uploads/live/' . $filename . '?t=' . $ts;
         return response()->json([
             'success' => true,
             'side' => $side,
-            'url' => asset('public/uploads/live/' . $filename) . '?t=' . $ts,
+            'url' => $url,
             'ts' => $ts,
         ]);
+    }
+
+    /**
+     * Poll LIVE siêu nhẹ (không đụng DB) — dashboard gọi ~5 lần/giây.
+     */
+    public function livePreviewStatus()
+    {
+        $this->releaseSessionLock();
+
+        return response()->json([
+            'success' => true,
+            'live_preview' => [
+                'entry' => $this->readLivePreview('entry'),
+                'exit' => $this->readLivePreview('exit'),
+            ],
+        ], 200, [
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+        ], JSON_INVALID_UTF8_SUBSTITUTE);
     }
 
     private function readLivePreview($side)
     {
         $side = $side === 'exit' ? 'exit' : 'entry';
-        $fullPath = public_path('uploads/live') . DIRECTORY_SEPARATOR . $side . '.jpg';
+        $dir = public_path('uploads/live');
+        $fullPath = $dir . DIRECTORY_SEPARATOR . $side . '.jpg';
+        $metaPath = $dir . DIRECTORY_SEPARATOR . $side . '.json';
+
         if (!is_file($fullPath)) {
             return ['active' => false, 'url' => null, 'ts' => null];
         }
-        $ts = (int) @filemtime($fullPath);
-        $age = time() - $ts;
-        // Frame cũ hơn 4s → ĐT đã tắt / mất mạng
-        $active = $age <= 4;
+
+        clearstatcache(true, $fullPath);
+        clearstatcache(true, $metaPath);
+
+        $ts = null;
+        if (is_file($metaPath)) {
+            $meta = json_decode((string) @file_get_contents($metaPath), true);
+            if (is_array($meta) && isset($meta['ts'])) {
+                $ts = (int) $meta['ts'];
+            }
+        }
+        if (!$ts) {
+            // Fallback cũ: giây → nhân 1000
+            $ts = ((int) @filemtime($fullPath)) * 1000;
+        }
+
+        $ageMs = (int) round(microtime(true) * 1000) - $ts;
+        // Frame cũ hơn 3s → ĐT đã tắt / mất mạng
+        $active = $ageMs >= 0 && $ageMs <= 3000;
+
         return [
             'active' => $active,
-            'url' => $active ? (asset('public/uploads/live/' . $side . '.jpg') . '?t=' . $ts) : null,
+            'url' => $active ? ('/public/uploads/live/' . $side . '.jpg?t=' . $ts) : null,
             'ts' => $ts,
         ];
     }

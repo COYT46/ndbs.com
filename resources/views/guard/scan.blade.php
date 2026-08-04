@@ -48,7 +48,8 @@ $(document).ready(function() {
     const IS_EXIT = SIDE === 'exit';
     const SCAN_MS = 1200;
     const RETRY_MS = 2500;
-    const LIVE_PUSH_MS = 450;
+    const LIVE_PUSH_MS = 160;
+    const LIVE_PUSH_BUSY_MS = 320;
     const API = {
         livePreview: @json(route('api.live_preview', [], false)),
         armedCode: @json(route('api.armed_exit_code', [], false)),
@@ -113,13 +114,6 @@ $(document).ready(function() {
         if (liveTimer) clearTimeout(liveTimer);
         if (!stream) return;
 
-        // Xe ra: chưa có mã thì không đẩy LIVE lên server
-        if (IS_EXIT && !armedCode) {
-            liveStarted = false;
-            liveTimer = setTimeout(pushLiveFrame, 1000);
-            return;
-        }
-
         if (livePushing) {
             liveTimer = setTimeout(pushLiveFrame, LIVE_PUSH_MS);
             return;
@@ -127,24 +121,70 @@ $(document).ready(function() {
 
         livePushing = true;
         liveStarted = true;
-        captureFrame(640, 0.5, liveCanvas).then(function(blob) {
-            if (!blob || !stream) return;
-            // Đang OCR thì bỏ frame LIVE này, ưu tiên nhận diện
-            if (scanning || busy) return;
-            const fd = new FormData();
-            fd.append('image', blob, 'live.jpg');
-            fd.append('side', SIDE);
-            return $.ajax({
-                url: API.livePreview,
-                type: 'POST',
-                data: fd,
-                processData: false,
-                contentType: false
+
+        Promise.resolve()
+            .then(function() {
+                // Frame nhỏ + JPEG thấp → upload nhanh, LIVE mượt hơn
+                return captureFrame(480, 0.38, liveCanvas);
+            })
+            .then(function(blob) {
+                if (!blob || !stream) return null;
+                const fd = new FormData();
+                fd.append('image', blob, 'live.jpg');
+                fd.append('side', SIDE);
+                return Promise.resolve($.ajax({
+                    url: API.livePreview,
+                    type: 'POST',
+                    data: fd,
+                    processData: false,
+                    contentType: false,
+                    timeout: 4000
+                }));
+            })
+            .catch(function(err) {
+                console.warn('live-preview error', err);
+            })
+            .finally(function() {
+                livePushing = false;
+                if (stream) {
+                    const nextDelay = (scanning || busy) ? LIVE_PUSH_BUSY_MS : LIVE_PUSH_MS;
+                    liveTimer = setTimeout(pushLiveFrame, nextDelay);
+                }
             });
-        }).always(function() {
-            livePushing = false;
-            if (stream) liveTimer = setTimeout(pushLiveFrame, IS_EXIT ? 900 : LIVE_PUSH_MS);
+    }
+
+    function waitForVideoReady(timeoutMs) {
+        return new Promise(function(resolve) {
+            const start = Date.now();
+            (function check() {
+                if (video && video.readyState >= 2 && video.videoWidth > 0) {
+                    resolve(true);
+                    return;
+                }
+                if (Date.now() - start > (timeoutMs || 8000)) {
+                    resolve(false);
+                    return;
+                }
+                setTimeout(check, 100);
+            })();
         });
+    }
+
+    async function openCameraStream() {
+        const attempts = [
+            { audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } },
+            { audio: false, video: { facingMode: 'environment' } },
+            { audio: false, video: true }
+        ];
+        let lastErr = null;
+        for (let i = 0; i < attempts.length; i++) {
+            try {
+                return await navigator.mediaDevices.getUserMedia(attempts[i]);
+            } catch (e) {
+                lastErr = e;
+            }
+        }
+        throw lastErr || new Error('getUserMedia failed');
     }
 
     function scheduleScan(delay) {
@@ -174,8 +214,9 @@ $(document).ready(function() {
         }
 
         if (armedCode) {
-            if (armedCode !== prev && !liveStarted) pushLiveFrame();
             ensureScanLoop(armedCode !== prev ? 80 : 200);
+        } else if (IS_EXIT) {
+            setStatus('Chờ quẹt mã (nhập trên máy tính)...');
         }
     }
 
@@ -427,7 +468,7 @@ $(document).ready(function() {
 
     async function startCamera() {
         if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-            location.href = 'https://' + location.host + location.pathname;
+            location.href = 'https://' + location.host + location.pathname + location.search;
             return;
         }
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -435,23 +476,29 @@ $(document).ready(function() {
             return;
         }
         try {
-            stream = await navigator.mediaDevices.getUserMedia({
-                audio: false,
-                video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
-            });
+            setStatus('Đang mở camera...');
+            stream = await openCameraStream();
+            video.setAttribute('playsinline', 'true');
+            video.setAttribute('muted', 'true');
+            video.muted = true;
             video.srcObject = stream;
             await video.play().catch(function() {});
-            setStatus(IS_EXIT ? 'Chờ quẹt mã (nhập trên máy tính)...' : 'Đang chờ biển số...');
+            const ready = await waitForVideoReady(8000);
+            if (!ready) {
+                setStatus('Camera mở nhưng chưa sẵn sàng — thử tải lại trang');
+            } else {
+                setStatus(IS_EXIT ? 'LIVE → màn giám sát | Chờ quẹt mã...' : 'LIVE → màn giám sát | Đang chờ biển số...');
+            }
+            // Luôn đẩy LIVE ngay khi mở camera → hiện trên màn giám sát (ô vào hoặc ô ra)
+            pushLiveFrame();
             if (IS_EXIT) {
                 pollArmedCode();
-                liveTimer = setTimeout(pushLiveFrame, 1000);
             } else {
                 scheduleScan();
-                pushLiveFrame();
             }
         } catch (e) {
             console.error(e);
-            setStatus('Không mở được camera — kiểm tra quyền / HTTPS');
+            setStatus('Không mở được camera — cấp quyền camera + dùng HTTPS');
         }
     }
 

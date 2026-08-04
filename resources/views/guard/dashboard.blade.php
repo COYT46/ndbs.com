@@ -21,7 +21,7 @@
                         <div class="bg-light d-flex align-items-center justify-content-center mb-3 rounded overflow-hidden"
                             style="height: 260px; border: 2px dashed #0d6efd; position: relative;">
                             <img id="entry-camera" src="" alt="Camera Xe Vào"
-                                style="max-height: 100%; max-width: 100%; object-fit: contain; display: none;">
+                                style="max-height: 100%; max-width: 100%; object-fit: cover; display: none;">
                             <div id="entry-live-badge" class="position-absolute top-0 start-0 m-2 badge bg-danger"
                                 style="display: none; z-index: 2; font-size: 11px;">
                                 <span class="spinner-grow spinner-grow-sm me-1" style="width: 8px; height: 8px;"></span>
@@ -68,7 +68,7 @@
                         <div class="bg-light d-flex align-items-center justify-content-center mb-3 rounded overflow-hidden"
                             style="height: 260px; border: 2px dashed #dc3545; position: relative;">
                             <img id="exit-camera" src="" alt="Camera Xe Ra"
-                                style="max-height: 100%; max-width: 100%; object-fit: contain; display: none;">
+                                style="max-height: 100%; max-width: 100%; object-fit: cover; display: none;">
                             <div id="exit-live-badge" class="position-absolute top-0 start-0 m-2 badge bg-danger"
                                 style="display: none; z-index: 2; font-size: 11px;">
                                 <span class="spinner-grow spinner-grow-sm me-1" style="width: 8px; height: 8px;"></span>
@@ -198,13 +198,15 @@ $(document).ready(function() {
 
     const API = {
         monitor: @json(route('api.guard_monitor', [], false)),
+        liveStatus: @json(route('api.live_status', [], false)),
         armExit: @json(route('api.arm_exit_code', [], false)),
         clearExit: @json(route('api.clear_exit_code', [], false)),
         retryExit: @json(route('api.retry_exit', [], false)),
         validate: @json(route('api.validate_checkout', [], false))
     };
 
-    const MONITOR_POLL_MS = 2000;
+    const MONITOR_POLL_MS = 1500;
+    const LIVE_POLL_MS = 120;
     const isPhone = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
         || (navigator.maxTouchPoints > 1 && window.innerWidth < 900);
 
@@ -287,57 +289,85 @@ $(document).ready(function() {
             });
     }
 
+    function setLiveFrame(side, live) {
+        const imgId = side === 'exit' ? '#exit-camera' : '#entry-camera';
+        const placeholderId = side === 'exit' ? '#exit-placeholder' : '#entry-placeholder';
+        const badgeId = side === 'exit' ? '#exit-live-badge' : '#entry-live-badge';
+        const lastTs = side === 'exit' ? lastLiveExitTs : lastLiveEntryTs;
+
+        if (live && live.active && live.url) {
+            if (live.ts === lastTs) {
+                $(badgeId).show();
+                return;
+            }
+            // Preload rồi mới gắn — tránh nháy trắng / giật
+            const nextTs = live.ts;
+            const url = live.url;
+            const pre = new Image();
+            pre.onload = function() {
+                if (side === 'exit') {
+                    if (nextTs < lastLiveExitTs) return;
+                    lastLiveExitTs = nextTs;
+                } else {
+                    if (nextTs < lastLiveEntryTs) return;
+                    lastLiveEntryTs = nextTs;
+                }
+                $(placeholderId).hide();
+                $(imgId).attr('src', url).css('object-fit', 'cover').show();
+                $(badgeId).show();
+            };
+            pre.onerror = function() {
+                $(badgeId).hide();
+            };
+            pre.src = url;
+        } else {
+            $(badgeId).hide();
+            const src = $(imgId).attr('src') || '';
+            if (!src || src.indexOf('/uploads/live/') !== -1) {
+                $(imgId).hide().attr('src', '').css('object-fit', 'cover');
+                $(placeholderId).show();
+                if (side === 'exit') lastLiveExitTs = 0;
+                else lastLiveEntryTs = 0;
+            }
+        }
+    }
+
     function applyLivePreview(live) {
-        const entryLive = live && live.entry;
-        const exitLive = live && live.exit;
+        setLiveFrame('entry', live && live.entry);
+        setLiveFrame('exit', live && live.exit);
+    }
 
-        if (entryLive && entryLive.active && entryLive.url && !entryShowingResult) {
-            if (entryLive.ts !== lastLiveEntryTs) {
-                lastLiveEntryTs = entryLive.ts;
-                $('#entry-placeholder').hide();
-                $('#entry-camera').attr('src', entryLive.url).css('object-fit', 'cover').show();
-            }
-            $('#entry-live-badge').show();
-        } else {
-            $('#entry-live-badge').hide();
-            if (!entryShowingResult) {
-                const src = $('#entry-camera').attr('src') || '';
-                if (!src || src.indexOf('/uploads/live/') !== -1) {
-                    $('#entry-camera').hide().attr('src', '').css('object-fit', 'contain');
-                    $('#entry-placeholder').show();
-                }
-                lastLiveEntryTs = 0;
-            }
-        }
-
-        if (exitLive && exitLive.active && exitLive.url && !exitLockedByPending) {
-            if (exitLive.ts !== lastLiveExitTs) {
-                lastLiveExitTs = exitLive.ts;
-                $('#exit-placeholder').hide();
-                $('#exit-camera').attr('src', exitLive.url).css('object-fit', 'cover').show();
-            }
-            $('#exit-live-badge').show();
-        } else {
-            $('#exit-live-badge').hide();
-            if (!exitLockedByPending) {
-                const src = $('#exit-camera').attr('src') || '';
-                if (!src || src.indexOf('/uploads/live/') !== -1) {
-                    $('#exit-camera').hide().attr('src', '').css('object-fit', 'contain');
-                    $('#exit-placeholder').show();
-                }
-                lastLiveExitTs = 0;
-            }
-        }
+    function pollLive() {
+        $.ajax({
+            url: API.liveStatus,
+            method: 'GET',
+            cache: false,
+            timeout: 2500,
+            data: { _: Date.now() }
+        }).done(function(res) {
+            if (res && res.success) applyLivePreview(res.live_preview);
+        }).always(function() {
+            setTimeout(pollLive, LIVE_POLL_MS);
+        });
     }
 
     function resetEntryUi() {
         if (entryTimerInterval) clearInterval(entryTimerInterval);
         entryShowingResult = false;
-        $('#entry-camera').hide().attr('src', '').css('object-fit', 'contain');
-        $('#entry-live-badge').hide();
-        $('#entry-placeholder').show();
+        // Không đụng ô camera LIVE — chỉ ẩn kết quả + xóa ảnh đối chiếu xe vào
         $('#entry-result, #entry-error').fadeOut();
-        lastLiveEntryTs = 0;
+        // Nếu đang chờ xác nhận xe ra thì giữ nguyên cột đối chiếu
+        if (!exitLockedByPending && !currentLogId) {
+            $('#comp-entry-img').hide().attr('src', '');
+            $('#comp-entry-empty').show();
+            $('#comp-entry-plate').text('-');
+            $('#comp-exit-img').hide().attr('src', '');
+            $('#comp-exit-empty').show();
+            $('#comp-exit-plate').text('-');
+            $('#comp-status-badge').removeClass('bg-success bg-danger text-white').addClass('bg-warning text-dark')
+                .text('Đang chờ nhận diện xe ra...');
+            $('#validation-buttons').hide();
+        }
     }
 
     function resetExitAndComparison(opts) {
@@ -349,9 +379,7 @@ $(document).ready(function() {
         if (!opts.keepCode) {
             $('#exit-code').val('');
         }
-        $('#exit-camera').hide().attr('src', '').css('object-fit', 'contain');
-        $('#exit-live-badge').hide();
-        $('#exit-placeholder').show();
+        // Không đụng ô camera LIVE — chỉ xóa đối chiếu / kết quả
         $('#exit-result').hide();
         $('#exit-auto-timer-wrap').addClass('d-none');
         $('#btn-exit-retry-inline').hide();
@@ -362,7 +390,6 @@ $(document).ready(function() {
         $('#validation-buttons').hide();
         currentLogId = null;
         lastSeenPendingId = null;
-        lastLiveExitTs = 0;
         lastArmedCode = '';
         lastArmFailedCode = '';
         $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
@@ -422,13 +449,21 @@ $(document).ready(function() {
     }
 
     function showEntrySuccess(plate, code, imageUrl) {
-        entryShowingResult = true;
+        entryShowingResult = false;
         $('#entry-error').hide();
-        $('#entry-live-badge').hide();
+        // Ảnh kết quả chỉ hiện ở cột Đối chiếu — không đè lên ô LIVE
         if (imageUrl) {
-            $('#entry-placeholder').hide();
-            $('#entry-camera').attr('src', imageUrl).css('object-fit', 'contain').show();
+            $('#comp-entry-empty').hide();
+            $('#comp-entry-img').attr('src', imageUrl).show();
         }
+        $('#comp-entry-plate').text(plate || '-');
+        $('#comp-exit-img').hide().attr('src', '');
+        $('#comp-exit-empty').show();
+        $('#comp-exit-plate').text('-');
+        $('#comp-status-badge').removeClass('bg-success bg-danger text-white').addClass('bg-warning text-dark')
+            .text('Xe vào OK — chờ nhận diện xe ra...');
+        $('#validation-buttons').hide();
+
         $('#res-plate').text(plate || '');
         $('#res-code').text(code || '');
         $('#entry-result').fadeIn();
@@ -449,25 +484,23 @@ $(document).ready(function() {
         opts = opts || {};
         if (!alert) return;
         if (entryTimerInterval) clearInterval(entryTimerInterval);
-        entryShowingResult = true;
+        entryShowingResult = false;
         $('#entry-result').hide();
-        $('#entry-live-badge').hide();
 
         if (alert.entry_image) {
-            $('#entry-placeholder').hide();
-            $('#entry-camera').attr('src', alert.entry_image).css('object-fit', 'contain').show();
+            $('#comp-entry-empty').hide();
+            $('#comp-entry-img').attr('src', alert.entry_image).show();
+            $('#comp-entry-plate').text(alert.plate_number || '-');
         }
 
         $('#entry-error-title').text('Xe vẫn nằm trong bãi');
         $('#entry-error-msg').text(alert.message || 'Xe này chưa ra khỏi bãi — không thể nhận diện vào lần nữa.');
         $('#entry-error').show();
 
-        // Máy tính bắt buộc hiện modal
         if (opts.modal !== false) {
             showNotificationModal(false, 'Xe vẫn nằm trong bãi', alert.message || 'Xe này chưa ra khỏi bãi.');
         }
 
-        // Tự ẩn sau 12s để không che lượt tiếp theo
         setTimeout(function() {
             if ($('#entry-error').is(':visible')) {
                 resetEntryUi();
@@ -484,7 +517,7 @@ $(document).ready(function() {
         currentLogId = data.log_id;
         lastSeenPendingId = data.log_id;
         exitLockedByPending = true;
-        $('#exit-live-badge').hide();
+        // Ảnh chỉ vào cột Đối chiếu — ô Camera Xe Ra vẫn dành cho LIVE
         if (data.entry_image) {
             $('#comp-entry-empty').hide();
             $('#comp-entry-img').attr('src', data.entry_image).show();
@@ -493,8 +526,6 @@ $(document).ready(function() {
         if (data.exit_image) {
             $('#comp-exit-empty').hide();
             $('#comp-exit-img').attr('src', data.exit_image).show();
-            $('#exit-placeholder').hide();
-            $('#exit-camera').attr('src', data.exit_image).css('object-fit', 'contain').show();
         }
         $('#comp-exit-plate').text(data.exit_plate || '-');
 
@@ -557,7 +588,7 @@ $(document).ready(function() {
             .done(function(res) {
                 if (!res || !res.success) return;
 
-                applyLivePreview(res.live_preview);
+                // LIVE đã poll riêng — không apply ở đây để tránh đè chậm
 
                 // Lần poll đầu sau F5: chỉ ghi nhận ID hiện có, KHÔNG hiện dữ liệu cũ lên màn hình
                 if (!monitorBootstrapped) {
@@ -622,8 +653,7 @@ $(document).ready(function() {
                 }
             })
             .always(function() {
-                const liveOn = $('#entry-live-badge').is(':visible') || $('#exit-live-badge').is(':visible');
-                setTimeout(pollMonitor, liveOn ? 500 : MONITOR_POLL_MS);
+                setTimeout(pollMonitor, MONITOR_POLL_MS);
             });
     }
 
@@ -671,6 +701,7 @@ $(document).ready(function() {
         });
     });
 
+    pollLive();
     pollMonitor();
 
     $('#exit-code').on('input', function() {
