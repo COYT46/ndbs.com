@@ -12,7 +12,8 @@ class TrustProxies extends Middleware
      *
      * @var array<int, string>|string|null
      */
-    protected $proxies;
+    // Tin proxy/Apache SSL để isSecure() đúng trên LAN HTTPS
+    protected $proxies = '*';
 
     /**
      * The headers that should be used to detect proxies.

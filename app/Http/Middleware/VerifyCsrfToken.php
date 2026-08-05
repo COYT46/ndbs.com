@@ -19,4 +19,14 @@ class VerifyCsrfToken extends Middleware
         'api/armed-exit-code',
         'api/guard-monitor',
     ];
+
+    /**
+     * Đồng bộ Secure với session cookie (tránh XSRF Secure=true trong khi session Secure=false).
+     */
+    protected function newCookie($request, $config)
+    {
+        $config['secure'] = (bool) ($config['secure'] ?? false);
+
+        return parent::newCookie($request, $config);
+    }
 }

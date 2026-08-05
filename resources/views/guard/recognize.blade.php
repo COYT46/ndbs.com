@@ -93,9 +93,6 @@
                                 <small id="exit-auto-timer-wrap" class="text-muted mt-1 d-none" style="font-size: 11px;">
                                     Tự động cho ra sau <span id="exit-auto-timer" class="fw-bold">10</span> giây...
                                 </small>
-                                <button type="button" id="btn-exit-retry-inline" class="btn btn-sm btn-outline-danger fw-bold mt-2" style="display: none;">
-                                    <i class="material-icons-outlined align-middle me-1" style="font-size: 16px;">refresh</i> Làm lại
-                                </button>
                             </div>
                         </div>
                     </div>
@@ -249,7 +246,6 @@ $(document).ready(function() {
         $('#exit-placeholder').show();
         $('#exit-result').hide();
         $('#exit-auto-timer-wrap').addClass('d-none');
-        $('#btn-exit-retry-inline').hide();
         $('#comp-entry-img, #comp-exit-img').hide().attr('src', '');
         $('#comp-entry-empty, #comp-exit-empty').show();
         $('#comp-entry-plate, #comp-exit-plate').text('-');
@@ -361,7 +357,6 @@ $(document).ready(function() {
         $('#comp-exit-plate').text(data.exit_plate || '-');
 
         const alertBox = $('#exit-alert-box');
-        $('#btn-exit-retry-inline').hide();
         $('#exit-result').show();
 
         if (data.match) {
@@ -389,19 +384,17 @@ $(document).ready(function() {
                 }
             }, 1000);
         } else {
-            // Nhận diện sai / biển không khớp → cho đổi ảnh, mã và nhận diện lại
+            // Nhận diện sai / biển không khớp
             exitLocked = false;
             setExitControlsEnabled(true);
             alertBox.removeClass('alert-success alert-info').addClass('alert-danger');
             $('#exit-message').html(
-                '<i class="material-icons-outlined align-middle me-1">warning</i> ' + (data.message || 'Biển số không khớp') +
-                '<div class="small fw-normal mt-1">Có thể đổi ảnh / mã rồi bấm Nhận diện lại.</div>'
+                '<i class="material-icons-outlined align-middle me-1">warning</i> ' + (data.message || 'Biển số không khớp')
             );
             $('#exit-auto-timer-wrap').addClass('d-none');
             $('#comp-status-badge').removeClass('bg-warning bg-success text-dark').addClass('bg-danger text-white')
-                .text('BSX không trùng — có thể nhận diện lại');
+                .text('BSX không trùng');
             $('#validation-buttons').show();
-            $('#btn-exit-retry-inline').show();
         }
     }
 
@@ -412,14 +405,12 @@ $(document).ready(function() {
         alertBox.removeClass('alert-success alert-info').addClass('alert-danger');
         $('#exit-message').html(
             '<i class="material-icons-outlined align-middle me-1">error</i> ' +
-            (message || 'Có lỗi xảy ra') +
-            '<div class="small fw-normal mt-1">Bạn có thể sửa mã / chọn ảnh khác rồi nhận diện lại.</div>'
+            (message || 'Có lỗi xảy ra')
         );
-        $('#btn-exit-retry-inline').show();
         $('#exit-result').show();
         $('#validation-buttons').hide();
         $('#comp-status-badge').removeClass('bg-success bg-danger text-white').addClass('bg-warning text-dark')
-            .text('Lỗi — có thể làm lại');
+            .text('Lỗi nhận diện');
     }
 
     function entryBtnHtml(busy) {
@@ -480,7 +471,6 @@ $(document).ready(function() {
     function submitExit(imageSource, codeVal) {
         if (exitLocked) return;
         $('#btn-exit-recognize').prop('disabled', true).html(exitBtnHtml(true));
-        $('#btn-exit-retry-inline').hide();
 
         function doSubmit() {
             const fd = new FormData();
@@ -576,14 +566,6 @@ $(document).ready(function() {
             return;
         }
         showNotificationModal(false, 'Chưa có ảnh', 'Vui lòng chọn ảnh xe ra để nhận diện.');
-    });
-
-    $('#btn-exit-retry-inline').click(function() {
-        const payload = {};
-        if (currentLogId) payload.log_id = currentLogId;
-        $.post(API.retryExit, payload).always(function() {
-            resetExitAndComparison();
-        });
     });
 
     let pendingValidationAction = null;

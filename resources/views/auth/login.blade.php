@@ -4,6 +4,9 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
     <title>Đăng nhập - LPR System</title>
     <link href="{{ asset('public/admin/assets/css/bootstrap.min.css') }}" rel="stylesheet">
     <link href="{{ asset('public/admin/sass/main.css') }}" rel="stylesheet">
@@ -40,25 +43,25 @@
                                 </div>
                             @endif
 
-                            <form class="row g-3" method="POST" action="/login">
+                            <form id="login-form" class="row g-3" method="POST" action="{{ url('/login') }}">
                                 @csrf
                                 <div class="col-12">
                                     <label for="email" class="form-label">Email</label>
                                     <input type="email" class="form-control" id="email" name="email"
-                                        value="{{ old('email') }}" required autofocus>
+                                        value="{{ old('email') }}" required autofocus autocomplete="username">
                                 </div>
                                 <div class="col-12">
                                     <label for="password" class="form-label">Mật khẩu</label>
                                     <div class="input-group" id="show_hide_password">
                                         <input type="password" class="form-control border-end-0" id="password"
-                                            name="password" required>
+                                            name="password" required autocomplete="current-password">
                                         <a href="javascript:;" class="input-group-text bg-transparent"><i
                                                 class="bi bi-eye-slash-fill"></i></a>
                                     </div>
                                 </div>
                                 <div class="col-12">
                                     <div class="d-grid">
-                                        <button type="submit" class="btn btn-primary">Đăng nhập</button>
+                                        <button type="submit" id="login-submit" class="btn btn-primary">Đăng nhập</button>
                                     </div>
                                 </div>
                             </form>
@@ -72,7 +75,30 @@
 
     <script src="{{ asset('public/admin/assets/js/jquery.min.js') }}"></script>
     <script>
+        // Trang lấy từ bfcache (nút Back) → CSRF cũ → 419: buộc tải lại
+        window.addEventListener('pageshow', function(e) {
+            if (e.persisted) {
+                window.location.reload();
+            }
+        });
+
         $(document).ready(function() {
+            var submitting = false;
+            $('#login-form').on('submit', function() {
+                if (submitting) {
+                    return false;
+                }
+                submitting = true;
+                var $btn = $('#login-submit');
+                $btn.prop('disabled', true).text('Đang đăng nhập...');
+                // Nếu mạng chậm, vẫn chỉ gửi 1 lần
+                setTimeout(function() {
+                    submitting = false;
+                    $btn.prop('disabled', false).text('Đăng nhập');
+                }, 8000);
+                return true;
+            });
+
             $("#show_hide_password a").on('click', function(event) {
                 event.preventDefault();
                 if ($('#show_hide_password input').attr("type") == "text") {

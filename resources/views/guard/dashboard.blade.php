@@ -21,7 +21,7 @@
                         <div class="bg-light d-flex align-items-center justify-content-center mb-3 rounded overflow-hidden"
                             style="height: 260px; border: 2px dashed #0d6efd; position: relative;">
                             <img id="entry-camera" src="" alt="Camera Xe Vào"
-                                style="max-height: 100%; max-width: 100%; object-fit: cover; display: none;">
+                                style="width: 100%; height: 100%; object-fit: cover; display: none; position: absolute; inset: 0;">
                             <div id="entry-live-badge" class="position-absolute top-0 start-0 m-2 badge bg-danger"
                                 style="display: none; z-index: 2; font-size: 11px;">
                                 <span class="spinner-grow spinner-grow-sm me-1" style="width: 8px; height: 8px;"></span>
@@ -68,7 +68,7 @@
                         <div class="bg-light d-flex align-items-center justify-content-center mb-3 rounded overflow-hidden"
                             style="height: 260px; border: 2px dashed #dc3545; position: relative;">
                             <img id="exit-camera" src="" alt="Camera Xe Ra"
-                                style="max-height: 100%; max-width: 100%; object-fit: cover; display: none;">
+                                style="width: 100%; height: 100%; object-fit: cover; display: none; position: absolute; inset: 0;">
                             <div id="exit-live-badge" class="position-absolute top-0 start-0 m-2 badge bg-danger"
                                 style="display: none; z-index: 2; font-size: 11px;">
                                 <span class="spinner-grow spinner-grow-sm me-1" style="width: 8px; height: 8px;"></span>

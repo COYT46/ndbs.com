@@ -10,7 +10,15 @@ class AuthController extends Controller
 {
     public function getLogin()
     {
-        return view('auth.login');
+        if (Auth::check()) {
+            return $this->redirectForUser(Auth::user());
+        }
+
+        return response()
+            ->view('auth.login')
+            ->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+            ->header('Pragma', 'no-cache')
+            ->header('Expires', '0');
     }
 
     public function postLogin(Request $request)
@@ -37,11 +45,8 @@ class AuthController extends Controller
             }
 
             $request->session()->regenerate();
-            if ($user->role === 'manager') {
-                return redirect()->intended('manager/dashboard');
-            } else {
-                return redirect()->intended('guard/dashboard');
-            }
+
+            return $this->redirectForUser($user);
         }
 
         return back()->withErrors([
@@ -55,5 +60,14 @@ class AuthController extends Controller
         $request->session()->invalidate();
         $request->session()->regenerateToken();
         return redirect('/login');
+    }
+
+    private function redirectForUser($user)
+    {
+        if (($user->role ?? null) === 'manager') {
+            return redirect()->intended('manager/dashboard');
+        }
+
+        return redirect()->intended('guard/dashboard');
     }
 }
