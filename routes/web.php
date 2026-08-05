@@ -48,5 +48,13 @@ Route::middleware(['auth'])->group(function () {
             $side = $side === 'exit' ? 'exit' : 'entry';
             return view('guard.scan', compact('side'));
         })->name('guard.scan');
+
+        // WebRTC signaling — web session, nhả sớm (không dùng Sanctum)
+        Route::middleware(['session.release'])->group(function () {
+            Route::post('/webrtc/signal', [\App\Http\Controllers\ApiController::class, 'webrtcPostSignal'])
+                ->name('guard.webrtc_signal_post');
+            Route::get('/webrtc/signal', [\App\Http\Controllers\ApiController::class, 'webrtcPollSignal'])
+                ->name('guard.webrtc_signal_poll');
+        });
     });
 });

@@ -892,20 +892,41 @@ class ApiController extends Controller
             'armed_exit_code' => $this->readArmedExitCode(),
             'entry_alert' => $this->readEntryAlert(),
             'live_preview' => [
-                'entry' => $this->readLivePreview('entry'),
-                'exit' => $this->readLivePreview('exit'),
+                // Không nhúng frame ở đây — LIVE dùng /api/live-status riêng
+                'entry' => $this->readLivePreview('entry', 0, false),
+                'exit' => $this->readLivePreview('exit', 0, false),
             ],
         ], 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
     }
 
     /**
      * ĐT đẩy frame LIVE → máy tính giám sát hiện lại.
+     * Nhận multipart file hoặc raw body image/jpeg (nhanh hơn trên LAN).
      */
     public function uploadLivePreview(Request $request)
     {
-        $side = $request->input('side', 'entry') === 'exit' ? 'exit' : 'entry';
-        if (!$request->hasFile('image')) {
+        $side = $request->input('side', $request->query('side', 'entry')) === 'exit' ? 'exit' : 'entry';
+
+        $bin = null;
+        if ($request->hasFile('image')) {
+            $path = $request->file('image')->getRealPath();
+            if ($path && is_file($path)) {
+                $bin = @file_get_contents($path);
+            }
+        } else {
+            $raw = $request->getContent();
+            if (is_string($raw) && strlen($raw) > 200) {
+                $bin = $raw;
+            }
+        }
+
+        if (!is_string($bin) || strlen($bin) < 200) {
             return response()->json(['success' => false, 'message' => 'Thiếu ảnh'], 422);
+        }
+
+        // Giới hạn ~180KB — LIVE chỉ cần khung nhỏ
+        if (strlen($bin) > 180000) {
+            return response()->json(['success' => false, 'message' => 'Frame quá lớn'], 413);
         }
 
         $this->releaseSessionLock();
@@ -924,11 +945,16 @@ class ApiController extends Controller
         if (is_file($tmpPath)) {
             @unlink($tmpPath);
         }
-        $request->file('image')->move($dir, $side . '.uploading.jpg');
+        if (@file_put_contents($tmpPath, $bin, LOCK_EX) === false) {
+            return response()->json(['success' => false, 'message' => 'Không ghi được frame'], 500);
+        }
         if (is_file($fullPath)) {
             @unlink($fullPath);
         }
-        @rename($tmpPath, $fullPath);
+        if (!@rename($tmpPath, $fullPath)) {
+            @copy($tmpPath, $fullPath);
+            @unlink($tmpPath);
+        }
 
         // Timestamp ms (Windows filemtime chỉ ~1s → LIVE bị giật/lag)
         $ts = (int) round(microtime(true) * 1000);
@@ -944,24 +970,27 @@ class ApiController extends Controller
     }
 
     /**
-     * Poll LIVE siêu nhẹ (không đụng DB) — dashboard gọi ~5 lần/giây.
+     * Poll LIVE siêu nhẹ — chỉ gửi base64 frame khi có frame mới hơn entry_ts/exit_ts.
      */
-    public function livePreviewStatus()
+    public function livePreviewStatus(Request $request)
     {
         $this->releaseSessionLock();
+
+        $sinceEntry = (int) $request->query('entry_ts', 0);
+        $sinceExit = (int) $request->query('exit_ts', 0);
 
         return response()->json([
             'success' => true,
             'live_preview' => [
-                'entry' => $this->readLivePreview('entry'),
-                'exit' => $this->readLivePreview('exit'),
+                'entry' => $this->readLivePreview('entry', $sinceEntry),
+                'exit' => $this->readLivePreview('exit', $sinceExit),
             ],
         ], 200, [
             'Cache-Control' => 'no-store, no-cache, must-revalidate',
         ], JSON_INVALID_UTF8_SUBSTITUTE);
     }
 
-    private function readLivePreview($side)
+    private function readLivePreview($side, $sinceTs = 0, $includeFrame = true)
     {
         $side = $side === 'exit' ? 'exit' : 'entry';
         $dir = public_path('uploads/live');
@@ -969,7 +998,7 @@ class ApiController extends Controller
         $metaPath = $dir . DIRECTORY_SEPARATOR . $side . '.json';
 
         if (!is_file($fullPath)) {
-            return ['active' => false, 'url' => null, 'ts' => null];
+            return ['active' => false, 'url' => null, 'ts' => null, 'frame' => null];
         }
 
         clearstatcache(true, $fullPath);
@@ -988,14 +1017,25 @@ class ApiController extends Controller
         }
 
         $ageMs = (int) round(microtime(true) * 1000) - $ts;
-        // Frame cũ hơn 3s → ĐT đã tắt / mất mạng
-        $active = $ageMs >= 0 && $ageMs <= 3000;
+        // Frame cũ hơn 2.5s → ĐT đã tắt / mất mạng
+        $active = $ageMs >= 0 && $ageMs <= 2500;
 
-        return [
+        $payload = [
             'active' => $active,
             'url' => $active ? ('/public/uploads/live/' . $side . '.jpg?t=' . $ts) : null,
             'ts' => $ts,
+            'frame' => null,
         ];
+
+        // Chỉ đính frame khi monitor chưa có bản này — bỏ HTTP tải ảnh lần 2
+        if ($includeFrame && $active && $ts > (int) $sinceTs) {
+            $bin = @file_get_contents($fullPath);
+            if (is_string($bin) && strlen($bin) > 200) {
+                $payload['frame'] = base64_encode($bin);
+            }
+        }
+
+        return $payload;
     }
 
     public function armedExitCodeStatus()
@@ -1199,5 +1239,178 @@ class ApiController extends Controller
     {
         $this->clearArmedExitCodeStorage();
         return response()->json(['success' => true]);
+    }
+
+    /**
+     * WebRTC signaling (file) — ĐT publish / PC subscribe trên LAN.
+     * Payload SDP/ICE luôn base64 JSON để tránh lỗi encoding.
+     */
+    public function webrtcPostSignal(Request $request)
+    {
+        $this->releaseSessionLock();
+
+        $side = $request->input('side', 'entry') === 'exit' ? 'exit' : 'entry';
+        $from = $request->input('from') === 'monitor' ? 'monitor' : 'phone';
+        $type = (string) $request->input('type', '');
+        $session = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $request->input('session', ''));
+        $payload = (string) $request->input('payload', '');
+
+        if (!in_array($type, ['offer', 'answer', 'ice', 'bye'], true)) {
+            return response()->json(['success' => false, 'message' => 'type không hợp lệ'], 422);
+        }
+        if ($session === '' || strlen($session) > 64) {
+            return response()->json(['success' => false, 'message' => 'session không hợp lệ'], 422);
+        }
+        if ($type !== 'bye' && $payload === '') {
+            return response()->json(['success' => false, 'message' => 'Thiếu payload'], 422);
+        }
+        // Offer/answer/ICE payload ~ vài KB; chặn spam
+        if (strlen($payload) > 200000) {
+            return response()->json(['success' => false, 'message' => 'Payload quá lớn'], 413);
+        }
+
+        $state = $this->readWebrtcState($side);
+
+        if ($type === 'offer' && $from === 'phone') {
+            // Session mới từ ĐT → xóa tín hiệu cũ
+            $state = [
+                'session' => $session,
+                'seq' => 0,
+                'updated_at' => time(),
+                'msgs' => [],
+            ];
+        } elseif ($type === 'bye') {
+            if (($state['session'] ?? null) === $session) {
+                $state = [
+                    'session' => null,
+                    'seq' => 0,
+                    'updated_at' => time(),
+                    'msgs' => [],
+                ];
+                $this->writeWebrtcState($side, $state);
+            }
+            return response()->json(['success' => true]);
+        } elseif (($state['session'] ?? null) !== $session) {
+            // Answer/ICE cho session đã hết hạn
+            return response()->json([
+                'success' => false,
+                'message' => 'Session không khớp',
+                'session' => $state['session'] ?? null,
+            ], 409);
+        }
+
+        $seq = (int) ($state['seq'] ?? 0) + 1;
+        $state['seq'] = $seq;
+        $state['updated_at'] = time();
+        $state['msgs'][] = [
+            'id' => $seq,
+            'from' => $from,
+            'type' => $type,
+            'payload' => $payload,
+            'ts' => (int) round(microtime(true) * 1000),
+        ];
+        // Giữ tối đa 50 tin
+        if (count($state['msgs']) > 50) {
+            $state['msgs'] = array_slice($state['msgs'], -50);
+        }
+        $this->writeWebrtcState($side, $state);
+
+        return response()->json([
+            'success' => true,
+            'id' => $seq,
+            'session' => $session,
+        ]);
+    }
+
+    public function webrtcPollSignal(Request $request)
+    {
+        $this->releaseSessionLock();
+
+        $side = $request->query('side', 'entry') === 'exit' ? 'exit' : 'entry';
+        $role = $request->query('role') === 'phone' ? 'phone' : 'monitor';
+        $after = (int) $request->query('after', 0);
+        $wantSession = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $request->query('session', ''));
+
+        $state = $this->readWebrtcState($side);
+        $session = $state['session'] ?? null;
+
+        // State cũ > 3 phút không ai poll → coi như chết
+        if ($session && (time() - (int) ($state['updated_at'] ?? 0)) > 180) {
+            $state = ['session' => null, 'seq' => 0, 'updated_at' => time(), 'msgs' => []];
+            $this->writeWebrtcState($side, $state);
+            $session = null;
+        }
+
+        // Client còn session cũ trong khi ĐT đã mở session mới → trả full tin mới
+        if ($wantSession !== '' && $session && $wantSession !== $session) {
+            $after = 0;
+        }
+
+        // Keepalive: đang poll = đang LIVE → gia hạn session (tránh OCR lâu bị cắt RTC)
+        if ($session && (time() - (int) ($state['updated_at'] ?? 0)) >= 8) {
+            $state['updated_at'] = time();
+            $this->writeWebrtcState($side, $state);
+        }
+
+        $msgs = [];
+        if ($session) {
+            foreach (($state['msgs'] ?? []) as $m) {
+                if (!is_array($m)) {
+                    continue;
+                }
+                if ((int) ($m['id'] ?? 0) <= $after) {
+                    continue;
+                }
+                // Chỉ lấy tin từ phía kia
+                if (($m['from'] ?? '') === $role) {
+                    continue;
+                }
+                $msgs[] = $m;
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'side' => $side,
+            'session' => $session,
+            'messages' => $msgs,
+        ], 200, [
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+        ]);
+    }
+
+    private function webrtcPath($side)
+    {
+        $dir = storage_path('app/webrtc');
+        if (!file_exists($dir)) {
+            @mkdir($dir, 0777, true);
+        }
+        $side = $side === 'exit' ? 'exit' : 'entry';
+        return $dir . DIRECTORY_SEPARATOR . $side . '.json';
+    }
+
+    private function readWebrtcState($side)
+    {
+        $path = $this->webrtcPath($side);
+        if (!is_file($path)) {
+            return ['session' => null, 'seq' => 0, 'updated_at' => 0, 'msgs' => []];
+        }
+        $raw = @file_get_contents($path);
+        $data = json_decode((string) $raw, true);
+        if (!is_array($data)) {
+            return ['session' => null, 'seq' => 0, 'updated_at' => 0, 'msgs' => []];
+        }
+        return $data;
+    }
+
+    private function writeWebrtcState($side, array $state)
+    {
+        $path = $this->webrtcPath($side);
+        $tmp = $path . '.tmp';
+        @file_put_contents($tmp, json_encode($state, JSON_UNESCAPED_SLASHES), LOCK_EX);
+        if (!@rename($tmp, $path)) {
+            @copy($tmp, $path);
+            @unlink($tmp);
+        }
     }
 }

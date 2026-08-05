@@ -48,10 +48,23 @@ $(document).ready(function() {
     const IS_EXIT = SIDE === 'exit';
     const SCAN_MS = 1200;
     const RETRY_MS = 2500;
-    const LIVE_PUSH_MS = 160;
-    const LIVE_PUSH_BUSY_MS = 320;
+    // LIVE: WebRTC ưu tiên; JPEG chỉ dự phòng / heartbeat
+    const LIVE_PUSH_MS = 90;
+    const LIVE_PUSH_BUSY_MS = 220;
+    const LIVE_PUSH_RTC_MS = 2500;
+    const LIVE_MAX_W = 360;
+    const LIVE_QUALITY = 0.28;
+    const RTC_POLL_MS = 280;
+    const RTC_CONFIG = {
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+        ]
+    };
     const API = {
         livePreview: @json(route('api.live_preview', [], false)),
+        webrtcSignal: @json(route('guard.webrtc_signal_post', [], false)),
+        webrtcPoll: @json(route('guard.webrtc_signal_poll', [], false)),
         armedCode: @json(route('api.armed_exit_code', [], false)),
         detect: @json(route('api.detect_preview', [], false)),
         preview: @json(route('api.recognize_preview', [], false)),
@@ -63,16 +76,24 @@ $(document).ready(function() {
     let scanTimer = null;
     let liveTimer = null;
     let armedPollTimer = null;
+    let rtcPollTimer = null;
     let scanning = false;
     let busy = false;
     let livePushing = false;
+    let liveNeedsPush = false;
     let liveStarted = false;
+    let rtcPc = null;
+    let rtcSession = null;
+    let rtcAfter = 0;
+    let rtcConnected = false;
     let armedCode = null;
     let cooldownUntil = 0;
     let scanAttempt = 0;
     const canvas = document.createElement('canvas');
     const liveCanvas = document.createElement('canvas');
+    const liveCtx = liveCanvas.getContext('2d', { alpha: false });
     const video = document.getElementById('scan-video');
+    const csrfToken = $('meta[name="csrf-token"]').attr('content');
 
     function setStatus(text) {
         $('#scan-status').text(text);
@@ -93,7 +114,8 @@ $(document).ready(function() {
         if (w > limit) { h = Math.round(h * (limit / w)); w = limit; }
         const c = targetCanvas || canvas;
         c.width = w; c.height = h;
-        c.getContext('2d').drawImage(video, 0, 0, w, h);
+        const ctx = (c === liveCanvas) ? liveCtx : c.getContext('2d');
+        ctx.drawImage(video, 0, 0, w, h);
         return new Promise(function(resolve) {
             c.toBlob(function(b) { resolve(b); }, 'image/jpeg', quality || 0.9);
         });
@@ -110,47 +132,231 @@ $(document).ready(function() {
         scheduleScan(typeof delay === 'number' ? delay : 150);
     }
 
-    function pushLiveFrame() {
+    function scheduleLivePush(delay) {
         if (liveTimer) clearTimeout(liveTimer);
+        liveTimer = setTimeout(pushLiveFrame, typeof delay === 'number' ? delay : LIVE_PUSH_MS);
+    }
+
+    function liveDelay() {
+        // Còn PC WebRTC (kể cả disconnected tạm) → JPEG chỉ heartbeat
+        if (rtcConnected || (rtcPc && rtcPc.connectionState !== 'failed' && rtcPc.connectionState !== 'closed')) {
+            return LIVE_PUSH_RTC_MS;
+        }
+        if (scanning || busy) return LIVE_PUSH_BUSY_MS;
+        return LIVE_PUSH_MS;
+    }
+
+    function pushLiveFrame() {
+        if (liveTimer) {
+            clearTimeout(liveTimer);
+            liveTimer = null;
+        }
         if (!stream) return;
 
+        // Đang OCR / RTC còn sống → không spam JPEG (tránh nghẽn Wi‑Fi làm rớt LIVE RTC)
+        const rtcAlive = !!(rtcPc && rtcPc.connectionState !== 'failed' && rtcPc.connectionState !== 'closed');
+        if (rtcAlive && (busy || scanning)) {
+            scheduleLivePush(LIVE_PUSH_RTC_MS);
+            return;
+        }
+
         if (livePushing) {
-            liveTimer = setTimeout(pushLiveFrame, LIVE_PUSH_MS);
+            liveNeedsPush = true;
             return;
         }
 
         livePushing = true;
+        liveNeedsPush = false;
         liveStarted = true;
 
-        Promise.resolve()
-            .then(function() {
-                // Frame nhỏ + JPEG thấp → upload nhanh, LIVE mượt hơn
-                return captureFrame(480, 0.38, liveCanvas);
-            })
+        captureFrame(LIVE_MAX_W, LIVE_QUALITY, liveCanvas)
             .then(function(blob) {
                 if (!blob || !stream) return null;
-                const fd = new FormData();
-                fd.append('image', blob, 'live.jpg');
-                fd.append('side', SIDE);
-                return Promise.resolve($.ajax({
-                    url: API.livePreview,
-                    type: 'POST',
-                    data: fd,
-                    processData: false,
-                    contentType: false,
-                    timeout: 4000
-                }));
+                return fetch(API.livePreview + '?side=' + encodeURIComponent(SIDE), {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'Content-Type': 'image/jpeg',
+                        'Accept': 'application/json',
+                        'X-CSRF-TOKEN': csrfToken,
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: blob
+                }).then(function(r) {
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    return r.json().catch(function() { return null; });
+                });
             })
             .catch(function(err) {
                 console.warn('live-preview error', err);
             })
             .finally(function() {
                 livePushing = false;
-                if (stream) {
-                    const nextDelay = (scanning || busy) ? LIVE_PUSH_BUSY_MS : LIVE_PUSH_MS;
-                    liveTimer = setTimeout(pushLiveFrame, nextDelay);
+                if (!stream) return;
+                if (liveNeedsPush && !rtcConnected && !rtcAlive) {
+                    pushLiveFrame();
+                    return;
+                }
+                scheduleLivePush(liveDelay());
+            });
+    }
+
+    function rtcEncode(obj) {
+        return btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+    }
+
+    function rtcDecode(payload) {
+        return JSON.parse(decodeURIComponent(escape(atob(payload))));
+    }
+
+    function rtcPost(type, payloadObj) {
+        if (!rtcSession) return Promise.resolve(null);
+        return fetch(API.webrtcSignal, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({
+                side: SIDE,
+                from: 'phone',
+                type: type,
+                session: rtcSession,
+                payload: payloadObj ? rtcEncode(payloadObj) : ''
+            })
+        }).then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json().catch(function() { return null; });
+        }).catch(function(err) {
+            console.warn('webrtc post', err);
+            return null;
+        });
+    }
+
+    function stopRtcPublisher() {
+        if (rtcPollTimer) {
+            clearTimeout(rtcPollTimer);
+            rtcPollTimer = null;
+        }
+        const oldSession = rtcSession;
+        if (oldSession) {
+            rtcPost('bye', null);
+        }
+        if (rtcPc) {
+            try { rtcPc.close(); } catch (e) {}
+            rtcPc = null;
+        }
+        rtcSession = null;
+        rtcAfter = 0;
+        rtcConnected = false;
+    }
+
+    async function startRtcPublisher() {
+        if (!stream || !window.RTCPeerConnection) return;
+        stopRtcPublisher();
+
+        rtcSession = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        rtcAfter = 0;
+        rtcConnected = false;
+
+        const pc = new RTCPeerConnection(RTC_CONFIG);
+        rtcPc = pc;
+
+        stream.getTracks().forEach(function(track) {
+            pc.addTrack(track, stream);
+        });
+
+        // Ưu tiên bitrate thấp cho LAN mượt, ít tốn băng thông
+        try {
+            const sender = pc.getSenders().find(function(s) { return s.track && s.track.kind === 'video'; });
+            if (sender && sender.getParameters) {
+                const params = sender.getParameters();
+                if (!params.encodings) params.encodings = [{}];
+                params.encodings[0].maxBitrate = 600000;
+                params.encodings[0].maxFramerate = 24;
+                await sender.setParameters(params);
+            }
+        } catch (e) {}
+
+        pc.onicecandidate = function(ev) {
+            if (!ev.candidate || !rtcSession) return;
+            const c = ev.candidate.toJSON ? ev.candidate.toJSON() : ev.candidate;
+            rtcPost('ice', c);
+        };
+        pc.onconnectionstatechange = function() {
+            const cs = pc.connectionState;
+            if (cs === 'connected') {
+                rtcConnected = true;
+                setStatus(IS_EXIT
+                    ? 'LIVE RTC → PC | Chờ quẹt mã...'
+                    : 'LIVE RTC → PC | Đang chờ biển số...');
+            } else if (cs === 'failed' || cs === 'closed') {
+                // Không tắt RTC khi 'disconnected' tạm (lúc upload ảnh OCR)
+                rtcConnected = false;
+                if (cs === 'failed') {
+                    try { if (pc.restartIce) pc.restartIce(); } catch (e) {}
+                }
+            }
+        };
+
+        try {
+            const offer = await pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false });
+            await pc.setLocalDescription(offer);
+            await rtcPost('offer', { type: offer.type, sdp: offer.sdp });
+            pollRtcPhone();
+        } catch (e) {
+            console.warn('webrtc offer fail', e);
+            stopRtcPublisher();
+        }
+    }
+
+    function pollRtcPhone() {
+        if (rtcPollTimer) clearTimeout(rtcPollTimer);
+        if (!rtcSession) return;
+
+        fetch(API.webrtcPoll + '?side=' + encodeURIComponent(SIDE)
+            + '&role=phone&after=' + rtcAfter
+            + '&session=' + encodeURIComponent(rtcSession)
+            + '&_=' + Date.now(), {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        }).then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        }).then(function(res) {
+            if (!res || !res.success) return;
+            if (!res.session || res.session !== rtcSession) return;
+            (res.messages || []).forEach(function(m) {
+                rtcAfter = Math.max(rtcAfter, Number(m.id) || 0);
+                let data = null;
+                try {
+                    data = m.payload ? rtcDecode(m.payload) : null;
+                } catch (e) {
+                    return;
+                }
+                if (!rtcPc) return;
+                if (m.type === 'answer' && data) {
+                    rtcPc.setRemoteDescription(data).catch(function(err) {
+                        console.warn('setRemote answer', err);
+                    });
+                } else if (m.type === 'ice' && data) {
+                    rtcPc.addIceCandidate(data).catch(function() {});
                 }
             });
+        }).catch(function(err) {
+            console.warn('webrtc poll', err);
+        }).finally(function() {
+            if (rtcSession) {
+                rtcPollTimer = setTimeout(pollRtcPhone, RTC_POLL_MS);
+            }
+        });
     }
 
     function waitForVideoReady(timeoutMs) {
@@ -491,6 +697,8 @@ $(document).ready(function() {
             }
             // Luôn đẩy LIVE ngay khi mở camera → hiện trên màn giám sát (ô vào hoặc ô ra)
             pushLiveFrame();
+            // WebRTC: stream video thẳng tới PC (mượt, ít delay)
+            startRtcPublisher();
             if (IS_EXIT) {
                 pollArmedCode();
             } else {
@@ -506,6 +714,7 @@ $(document).ready(function() {
         if (armedPollTimer) clearTimeout(armedPollTimer);
         if (liveTimer) clearTimeout(liveTimer);
         if (scanTimer) clearTimeout(scanTimer);
+        stopRtcPublisher();
         if (stream) stream.getTracks().forEach(function(t) { t.stop(); });
     });
 

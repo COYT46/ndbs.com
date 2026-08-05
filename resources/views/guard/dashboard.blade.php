@@ -18,14 +18,16 @@
                 </div>
                 <div class="card-body text-center d-flex flex-column justify-content-between p-3">
                     <div>
-                        <div class="bg-light d-flex align-items-center justify-content-center mb-3 rounded overflow-hidden"
-                            style="height: 260px; border: 2px dashed #0d6efd; position: relative;">
+                        <div class="bg-light d-flex align-items-center justify-content-center mb-3 rounded overflow-hidden live-frame-box"
+                            style="height: 380px; width: 100%; border: 2px dashed #0d6efd; position: relative;">
+                            <video id="entry-live-video" playsinline muted autoplay
+                                style="width: 100%; height: 100%; object-fit: contain; display: none; position: absolute; inset: 0; background: #f8f9fa;"></video>
                             <img id="entry-camera" src="" alt="Camera Xe Vào"
-                                style="width: 100%; height: 100%; object-fit: cover; display: none; position: absolute; inset: 0;">
+                                style="width: 100%; height: 100%; object-fit: contain; display: none; position: absolute; inset: 0;">
                             <div id="entry-live-badge" class="position-absolute top-0 start-0 m-2 badge bg-danger"
                                 style="display: none; z-index: 2; font-size: 11px;">
                                 <span class="spinner-grow spinner-grow-sm me-1" style="width: 8px; height: 8px;"></span>
-                                LIVE ĐT
+                                <span id="entry-live-badge-text">LIVE ĐT</span>
                             </div>
                             <div id="entry-placeholder" class="text-muted text-center p-3">
                                 <i class="material-icons-outlined text-primary" style="font-size: 54px;">smartphone</i>
@@ -65,14 +67,16 @@
                 </div>
                 <div class="card-body text-center d-flex flex-column justify-content-between p-3">
                     <div>
-                        <div class="bg-light d-flex align-items-center justify-content-center mb-3 rounded overflow-hidden"
-                            style="height: 260px; border: 2px dashed #dc3545; position: relative;">
+                        <div class="bg-light d-flex align-items-center justify-content-center mb-3 rounded overflow-hidden live-frame-box"
+                            style="height: 380px; width: 100%; border: 2px dashed #dc3545; position: relative;">
+                            <video id="exit-live-video" playsinline muted autoplay
+                                style="width: 100%; height: 100%; object-fit: contain; display: none; position: absolute; inset: 0; background: #f8f9fa;"></video>
                             <img id="exit-camera" src="" alt="Camera Xe Ra"
-                                style="width: 100%; height: 100%; object-fit: cover; display: none; position: absolute; inset: 0;">
+                                style="width: 100%; height: 100%; object-fit: contain; display: none; position: absolute; inset: 0;">
                             <div id="exit-live-badge" class="position-absolute top-0 start-0 m-2 badge bg-danger"
                                 style="display: none; z-index: 2; font-size: 11px;">
                                 <span class="spinner-grow spinner-grow-sm me-1" style="width: 8px; height: 8px;"></span>
-                                LIVE ĐT
+                                <span id="exit-live-badge-text">LIVE ĐT</span>
                             </div>
                             <div id="exit-placeholder" class="text-muted text-center p-3">
                                 <i class="material-icons-outlined text-danger" style="font-size: 54px;">smartphone</i>
@@ -108,7 +112,7 @@
 
         <!-- Cot 3: Doi chieu -->
         <div class="col-12 col-xl-4">
-            <div class="card border-dark shadow-sm" id="comparison-section">
+            <div class="card h-100 border-dark shadow-sm" id="comparison-section">
                 <div class="card-header bg-dark text-white p-3">
                     <div class="d-flex align-items-center justify-content-between mb-2">
                         <h5 class="mb-0 text-white fw-bold fs-6"><i class="material-icons-outlined align-middle me-1">compare</i> Đối chiếu Hình ảnh</h5>
@@ -199,6 +203,8 @@ $(document).ready(function() {
     const API = {
         monitor: @json(route('api.guard_monitor', [], false)),
         liveStatus: @json(route('api.live_status', [], false)),
+        webrtcSignal: @json(route('guard.webrtc_signal_post', [], false)),
+        webrtcPoll: @json(route('guard.webrtc_signal_poll', [], false)),
         armExit: @json(route('api.arm_exit_code', [], false)),
         clearExit: @json(route('api.clear_exit_code', [], false)),
         retryExit: @json(route('api.retry_exit', [], false)),
@@ -207,6 +213,14 @@ $(document).ready(function() {
 
     const MONITOR_POLL_MS = 1500;
     const LIVE_POLL_MS = 120;
+    const LIVE_POLL_IDLE_MS = 280;
+    const RTC_POLL_MS = 280;
+    const RTC_CONFIG = {
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+        ]
+    };
     const isPhone = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
         || (navigator.maxTouchPoints > 1 && window.innerWidth < 900);
 
@@ -222,12 +236,239 @@ $(document).ready(function() {
     let lastLiveExitTs = 0;
     let entryShowingResult = false;
     let exitLockedByPending = false;
+    let liveObjectUrls = { entry: null, exit: null };
+    const rtcState = {
+        entry: { pc: null, session: null, after: 0, connected: false, pollTimer: null },
+        exit: { pc: null, session: null, after: 0, connected: false, pollTimer: null }
+    };
 
     function clearExitTimer() {
         if (exitTimerInterval) {
             clearInterval(exitTimerInterval);
             exitTimerInterval = null;
         }
+    }
+
+    function revokeLiveUrl(side) {
+        if (liveObjectUrls[side]) {
+            try { URL.revokeObjectURL(liveObjectUrls[side]); } catch (e) {}
+            liveObjectUrls[side] = null;
+        }
+    }
+
+    function frameToObjectUrl(b64) {
+        try {
+            const bin = atob(b64);
+            const len = bin.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+            return URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function rtcEncode(obj) {
+        return btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+    }
+
+    function rtcDecode(payload) {
+        return JSON.parse(decodeURIComponent(escape(atob(payload))));
+    }
+
+    function rtcPost(side, type, payloadObj, session) {
+        return $.ajax({
+            url: API.webrtcSignal,
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                side: side,
+                from: 'monitor',
+                type: type,
+                session: session,
+                payload: payloadObj ? rtcEncode(payloadObj) : ''
+            }),
+            timeout: 4000
+        });
+    }
+
+    function setRtcUi(side, connected) {
+        const video = document.getElementById(side + '-live-video');
+        const img = $('#' + side + '-camera');
+        const placeholder = $('#' + side + '-placeholder');
+        const badge = $('#' + side + '-live-badge');
+        const badgeText = $('#' + side + '-live-badge-text');
+        if (connected) {
+            placeholder.hide();
+            img.hide();
+            if (video) {
+                video.style.display = 'block';
+            }
+            badgeText.text('LIVE RTC');
+            badge.show();
+        } else {
+            // Soft off: không xóa srcObject (disconnected tạm lúc OCR sẽ tự connected lại)
+            badgeText.text('LIVE ĐT');
+        }
+    }
+
+    function hardClearRtcVideo(side) {
+        const video = document.getElementById(side + '-live-video');
+        if (video) {
+            video.style.display = 'none';
+            try { video.srcObject = null; } catch (e) {}
+        }
+    }
+
+    function isRtcPrefer(side) {
+        const st = rtcState[side];
+        const video = document.getElementById(side + '-live-video');
+        if (st && st.connected) return true;
+        if (video && video.srcObject) {
+            const cs = st && st.pc ? st.pc.connectionState : '';
+            if (!cs || cs === 'connected' || cs === 'connecting' || cs === 'disconnected') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function stopRtcSide(side) {
+        const st = rtcState[side];
+        if (st.pollTimer) {
+            clearTimeout(st.pollTimer);
+            st.pollTimer = null;
+        }
+        if (st.pc) {
+            try { st.pc.close(); } catch (e) {}
+            st.pc = null;
+        }
+        st.session = null;
+        st.after = 0;
+        st.connected = false;
+        hardClearRtcVideo(side);
+        setRtcUi(side, false);
+    }
+
+    function handleRtcMessages(side, messages, session) {
+        const st = rtcState[side];
+        if (!messages || !messages.length) return;
+        messages.forEach(function(m) {
+            st.after = Math.max(st.after, Number(m.id) || 0);
+            let data = null;
+            try {
+                data = m.payload ? rtcDecode(m.payload) : null;
+            } catch (e) {
+                console.warn('webrtc decode', e);
+                return;
+            }
+            if (m.type === 'offer') {
+                acceptRtcOffer(side, session, data);
+            } else if (m.type === 'ice' && st.pc && st.session === session && data) {
+                st.pc.addIceCandidate(data).catch(function() {});
+            } else if (m.type === 'bye') {
+                stopRtcSide(side);
+            }
+        });
+    }
+
+    async function acceptRtcOffer(side, session, desc) {
+        const st = rtcState[side];
+        if (!desc || !desc.type || !desc.sdp) return;
+
+        // Session mới / đổi offer → tạo PC mới
+        if (st.pc && st.session !== session) {
+            try { st.pc.close(); } catch (e) {}
+            st.pc = null;
+            st.connected = false;
+        }
+        st.session = session;
+
+        if (!st.pc) {
+            const pc = new RTCPeerConnection(RTC_CONFIG);
+            st.pc = pc;
+            pc.onicecandidate = function(ev) {
+                if (!ev.candidate || !st.session) return;
+                rtcPost(side, 'ice', ev.candidate.toJSON ? ev.candidate.toJSON() : ev.candidate, st.session);
+            };
+            pc.onconnectionstatechange = function() {
+                const cs = pc.connectionState;
+                if (cs === 'connected') {
+                    st.connected = true;
+                    setRtcUi(side, true);
+                } else if (cs === 'failed' || cs === 'closed') {
+                    // Chỉ chết hẳn — bỏ qua 'disconnected' (hay xảy ra lúc ĐT upload OCR)
+                    st.connected = false;
+                    if (cs === 'failed') {
+                        try { if (pc.restartIce) pc.restartIce(); } catch (e) {}
+                    }
+                    if (cs === 'closed') {
+                        hardClearRtcVideo(side);
+                        setRtcUi(side, false);
+                    }
+                }
+                // 'disconnected' / 'connecting': giữ nguyên video RTC
+            };
+            pc.ontrack = function(ev) {
+                const video = document.getElementById(side + '-live-video');
+                if (!video) return;
+                const ms = ev.streams && ev.streams[0]
+                    ? ev.streams[0]
+                    : new MediaStream([ev.track]);
+                video.srcObject = ms;
+                video.muted = true;
+                video.playsInline = true;
+                video.play().catch(function() {});
+                st.connected = true;
+                setRtcUi(side, true);
+            };
+        }
+
+        try {
+            await st.pc.setRemoteDescription(desc);
+            const answer = await st.pc.createAnswer();
+            await st.pc.setLocalDescription(answer);
+            await rtcPost(side, 'answer', {
+                type: answer.type,
+                sdp: answer.sdp
+            }, session);
+        } catch (e) {
+            console.warn('webrtc answer fail', e);
+            stopRtcSide(side);
+        }
+    }
+
+    function pollRtcSide(side) {
+        const st = rtcState[side];
+        if (st.pollTimer) clearTimeout(st.pollTimer);
+
+        $.ajax({
+            url: API.webrtcPoll,
+            method: 'GET',
+            cache: false,
+            timeout: 4000,
+            data: {
+                side: side,
+                role: 'monitor',
+                after: st.after,
+                session: st.session || '',
+                _: Date.now()
+            }
+        }).done(function(res) {
+            if (!res || !res.success) return;
+            if (!res.session) {
+                if (st.session) stopRtcSide(side);
+                return;
+            }
+            // Session đổi từ ĐT
+            if (st.session && res.session !== st.session) {
+                stopRtcSide(side);
+                st.after = 0;
+            }
+            handleRtcMessages(side, res.messages || [], res.session);
+        }).always(function() {
+            st.pollTimer = setTimeout(function() { pollRtcSide(side); }, RTC_POLL_MS);
+        });
     }
 
     function showNotificationModal(isSuccess, title, message) {
@@ -290,21 +531,32 @@ $(document).ready(function() {
     }
 
     function setLiveFrame(side, live) {
+        // WebRTC đang có stream → luôn ưu tiên, không để JPEG đè khi OCR
+        if (isRtcPrefer(side)) {
+            const video = document.getElementById(side + '-live-video');
+            const img = $('#' + side + '-camera');
+            $('#' + side + '-placeholder').hide();
+            img.hide();
+            if (video) video.style.display = 'block';
+            $('#' + side + '-live-badge-text').text('LIVE RTC');
+            $('#' + side + '-live-badge').show();
+            return;
+        }
+
         const imgId = side === 'exit' ? '#exit-camera' : '#entry-camera';
         const placeholderId = side === 'exit' ? '#exit-placeholder' : '#entry-placeholder';
         const badgeId = side === 'exit' ? '#exit-live-badge' : '#entry-live-badge';
         const lastTs = side === 'exit' ? lastLiveExitTs : lastLiveEntryTs;
 
-        if (live && live.active && live.url) {
-            if (live.ts === lastTs) {
+        if (live && live.active && (live.frame || live.url)) {
+            if (live.ts && live.ts === lastTs) {
                 $(badgeId).show();
+                $('#' + side + '-live-badge-text').text('LIVE ĐT');
                 return;
             }
-            // Preload rồi mới gắn — tránh nháy trắng / giật
-            const nextTs = live.ts;
-            const url = live.url;
-            const pre = new Image();
-            pre.onload = function() {
+
+            const nextTs = live.ts || Date.now();
+            const apply = function(src) {
                 if (side === 'exit') {
                     if (nextTs < lastLiveExitTs) return;
                     lastLiveExitTs = nextTs;
@@ -313,18 +565,37 @@ $(document).ready(function() {
                     lastLiveEntryTs = nextTs;
                 }
                 $(placeholderId).hide();
-                $(imgId).attr('src', url).css('object-fit', 'cover').show();
+                const video = document.getElementById(side + '-live-video');
+                if (video) video.style.display = 'none';
+                $(imgId).attr('src', src).css('object-fit', 'contain').show();
+                $('#' + side + '-live-badge-text').text('LIVE ĐT');
                 $(badgeId).show();
             };
-            pre.onerror = function() {
-                $(badgeId).hide();
-            };
-            pre.src = url;
+
+            // Frame nhúng sẵn → hiện ngay, không GET thêm file
+            if (live.frame) {
+                const objUrl = frameToObjectUrl(live.frame);
+                if (objUrl) {
+                    revokeLiveUrl(side);
+                    liveObjectUrls[side] = objUrl;
+                    apply(objUrl);
+                    return;
+                }
+                apply('data:image/jpeg;base64,' + live.frame);
+                return;
+            }
+
+            // Fallback URL file
+            const pre = new Image();
+            pre.onload = function() { apply(live.url); };
+            pre.onerror = function() { $(badgeId).hide(); };
+            pre.src = live.url;
         } else {
             $(badgeId).hide();
             const src = $(imgId).attr('src') || '';
-            if (!src || src.indexOf('/uploads/live/') !== -1) {
-                $(imgId).hide().attr('src', '').css('object-fit', 'cover');
+            if (!src || src.indexOf('/uploads/live/') !== -1 || src.indexOf('blob:') === 0 || src.indexOf('data:image') === 0) {
+                revokeLiveUrl(side);
+                $(imgId).hide().attr('src', '').css('object-fit', 'contain');
                 $(placeholderId).show();
                 if (side === 'exit') lastLiveExitTs = 0;
                 else lastLiveEntryTs = 0;
@@ -343,11 +614,16 @@ $(document).ready(function() {
             method: 'GET',
             cache: false,
             timeout: 2500,
-            data: { _: Date.now() }
+            data: {
+                entry_ts: lastLiveEntryTs,
+                exit_ts: lastLiveExitTs,
+                _: Date.now()
+            }
         }).done(function(res) {
             if (res && res.success) applyLivePreview(res.live_preview);
         }).always(function() {
-            setTimeout(pollLive, LIVE_POLL_MS);
+            const active = (lastLiveEntryTs > 0) || (lastLiveExitTs > 0);
+            setTimeout(pollLive, active ? LIVE_POLL_MS : LIVE_POLL_IDLE_MS);
         });
     }
 
@@ -702,6 +978,8 @@ $(document).ready(function() {
     });
 
     pollLive();
+    pollRtcSide('entry');
+    pollRtcSide('exit');
     pollMonitor();
 
     $('#exit-code').on('input', function() {
