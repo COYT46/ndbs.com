@@ -16,43 +16,39 @@
                 <div class="card-header bg-primary text-white d-flex align-items-center justify-content-between py-3">
                     <h5 class="mb-0 text-white fw-bold fs-6"><i class="material-icons-outlined align-middle me-1">login</i> Camera Xe Vào (Check-In)</h5>
                 </div>
-                <div class="card-body text-center d-flex flex-column justify-content-between p-3">
-                    <div>
-                        <div class="bg-light d-flex align-items-center justify-content-center mb-3 rounded overflow-hidden live-frame-box"
-                            style="height: 380px; width: 100%; border: 2px dashed #0d6efd; position: relative;">
-                            <video id="entry-live-video" playsinline muted autoplay
-                                style="width: 100%; height: 100%; object-fit: contain; display: none; position: absolute; inset: 0; background: #f8f9fa;"></video>
-                            <img id="entry-camera" src="" alt="Camera Xe Vào"
-                                style="width: 100%; height: 100%; object-fit: contain; display: none; position: absolute; inset: 0;">
-                            <div id="entry-live-badge" class="position-absolute top-0 start-0 m-2 badge bg-danger"
-                                style="display: none; z-index: 2; font-size: 11px;">
-                                <span class="spinner-grow spinner-grow-sm me-1" style="width: 8px; height: 8px;"></span>
-                                <span id="entry-live-badge-text">LIVE ĐT</span>
-                            </div>
-                            <div id="entry-placeholder" class="text-muted text-center p-3">
-                                <i class="material-icons-outlined text-primary" style="font-size: 54px;">smartphone</i>
-                                <h6 class="mt-2 text-dark fw-bold small" id="entry-placeholder-text">Chờ ĐT quét xe vào</h6>
-                            </div>
+                <div class="card-body text-center p-3">
+                    <div class="bg-light d-flex align-items-center justify-content-center mb-3 rounded overflow-hidden live-frame-box"
+                        style="height: 350px; width: 100%; border: 2px dashed #0d6efd; position: relative;">
+                        <video id="entry-live-video" playsinline muted autoplay
+                            style="width: 100%; height: 100%; object-fit: contain; display: none; position: absolute; inset: 0; background: #f8f9fa;"></video>
+                        <img id="entry-camera" src="" alt="Camera Xe Vào"
+                            style="width: 100%; height: 100%; object-fit: contain; display: none; position: absolute; inset: 0;">
+                        <div id="entry-live-badge" class="position-absolute top-0 start-0 m-2 badge bg-danger"
+                            style="display: none; z-index: 2; font-size: 11px;">
+                            <span class="spinner-grow spinner-grow-sm me-1" style="width: 8px; height: 8px;"></span>
+                            <span id="entry-live-badge-text">LIVE ĐT</span>
+                        </div>
+                        <div id="entry-placeholder" class="text-muted text-center p-3">
+                            <i class="material-icons-outlined text-primary" style="font-size: 54px;">smartphone</i>
+                            <h6 class="mt-2 text-dark fw-bold small" id="entry-placeholder-text">Chờ ĐT quét xe vào</h6>
                         </div>
                     </div>
 
-                    <div>
-                        <div id="entry-result" class="mt-1" style="display: none;">
-                            <div class="alert alert-success border-0 shadow-sm mb-0 p-2">
-                                <h6 class="alert-heading fw-bold mb-1"><i class="material-icons-outlined align-middle">check_circle</i> Nhận diện thành công!</h6>
-                                <div class="fs-6 mb-1">Biển số: <strong id="res-plate" class="text-danger"></strong></div>
-                                <div class="fs-6 fw-bold">Mã Code: <strong id="res-code" class="text-primary badge bg-light border text-primary px-2 py-1"></strong></div>
-                                <small class="text-muted mt-1 d-block" style="font-size: 11px;">Tự động làm mới sau <span id="entry-timer" class="fw-bold">10</span> giây...</small>
-                            </div>
+                    <div id="entry-result" class="mt-2" style="display: none;">
+                        <div class="alert alert-success border-0 shadow-sm mb-0 p-2">
+                            <h6 class="alert-heading fw-bold mb-1"><i class="material-icons-outlined align-middle">check_circle</i> Nhận diện thành công!</h6>
+                            <div class="fs-6 mb-1">Biển số: <strong id="res-plate" class="text-danger"></strong></div>
+                            <div class="fs-6 fw-bold">Mã Code: <strong id="res-code" class="text-primary badge bg-light border text-primary px-2 py-1"></strong></div>
+                            <small class="text-muted mt-1 d-block" style="font-size: 11px;">Tự động làm mới sau <span id="entry-timer" class="fw-bold">10</span> giây...</small>
                         </div>
-                        <div id="entry-error" class="mt-1" style="display: none;">
-                            <div class="alert alert-danger border-danger shadow-sm mb-0 p-3">
-                                <h6 class="alert-heading fw-bold mb-1 text-danger">
-                                    <i class="material-icons-outlined align-middle">warning</i>
-                                    <span id="entry-error-title">Cảnh báo</span>
-                                </h6>
-                                <div class="fs-6 fw-semibold" id="entry-error-msg"></div>
-                            </div>
+                    </div>
+                    <div id="entry-error" class="mt-2" style="display: none;">
+                        <div class="alert alert-danger border-danger shadow-sm mb-0 p-3">
+                            <h6 class="alert-heading fw-bold mb-1 text-danger">
+                                <i class="material-icons-outlined align-middle">warning</i>
+                                <span id="entry-error-title">Cảnh báo</span>
+                            </h6>
+                            <div class="fs-6 fw-semibold" id="entry-error-msg"></div>
                         </div>
                     </div>
                 </div>
@@ -65,45 +61,41 @@
                 <div class="card-header bg-danger text-white d-flex align-items-center justify-content-between py-3">
                     <h5 class="mb-0 text-white fw-bold fs-6"><i class="material-icons-outlined align-middle me-1">logout</i> Camera Xe Ra (Check-Out)</h5>
                 </div>
-                <div class="card-body text-center d-flex flex-column justify-content-between p-3">
-                    <div>
-                        <div class="bg-light d-flex align-items-center justify-content-center mb-3 rounded overflow-hidden live-frame-box"
-                            style="height: 380px; width: 100%; border: 2px dashed #dc3545; position: relative;">
-                            <video id="exit-live-video" playsinline muted autoplay
-                                style="width: 100%; height: 100%; object-fit: contain; display: none; position: absolute; inset: 0; background: #f8f9fa;"></video>
-                            <img id="exit-camera" src="" alt="Camera Xe Ra"
-                                style="width: 100%; height: 100%; object-fit: contain; display: none; position: absolute; inset: 0;">
-                            <div id="exit-live-badge" class="position-absolute top-0 start-0 m-2 badge bg-danger"
-                                style="display: none; z-index: 2; font-size: 11px;">
-                                <span class="spinner-grow spinner-grow-sm me-1" style="width: 8px; height: 8px;"></span>
-                                <span id="exit-live-badge-text">LIVE ĐT</span>
-                            </div>
-                            <div id="exit-placeholder" class="text-muted text-center p-3">
-                                <i class="material-icons-outlined text-danger" style="font-size: 54px;">smartphone</i>
-                                <h6 class="mt-2 text-dark fw-bold small" id="exit-placeholder-text">Chờ ĐT quét xe ra</h6>
-                            </div>
+                <div class="card-body text-center p-3">
+                    <div class="bg-light d-flex align-items-center justify-content-center mb-3 rounded overflow-hidden live-frame-box"
+                        style="height: 350px; width: 100%; border: 2px dashed #dc3545; position: relative;">
+                        <video id="exit-live-video" playsinline muted autoplay
+                            style="width: 100%; height: 100%; object-fit: contain; display: none; position: absolute; inset: 0; background: #f8f9fa;"></video>
+                        <img id="exit-camera" src="" alt="Camera Xe Ra"
+                            style="width: 100%; height: 100%; object-fit: contain; display: none; position: absolute; inset: 0;">
+                        <div id="exit-live-badge" class="position-absolute top-0 start-0 m-2 badge bg-danger"
+                            style="display: none; z-index: 2; font-size: 11px;">
+                            <span class="spinner-grow spinner-grow-sm me-1" style="width: 8px; height: 8px;"></span>
+                            <span id="exit-live-badge-text">LIVE ĐT</span>
                         </div>
-
-                        <div class="input-group mb-2 shadow-sm">
-                            <span class="input-group-text bg-light text-danger fw-bold small"><i class="material-icons-outlined me-1 fs-6">qr_code</i> Mã Code</span>
-                            <input type="text" id="exit-code" class="form-control text-uppercase fw-bold" placeholder="Nhập mã" maxlength="6">
+                        <div id="exit-placeholder" class="text-muted text-center p-3">
+                            <i class="material-icons-outlined text-danger" style="font-size: 54px;">smartphone</i>
+                            <h6 class="mt-2 text-dark fw-bold small" id="exit-placeholder-text">Chờ ĐT quét xe ra</h6>
                         </div>
-                        <small id="exit-code-arm-hint" class="text-muted d-block mb-2" style="font-size: 13px;">
-                            Nhập mã 6 ký tự để ĐT bắt đầu quét
-                        </small>
                     </div>
 
-                    <div>
-                        <div id="exit-result" class="mt-1" style="display: none;">
-                            <div class="alert mb-0 shadow-sm p-2" id="exit-alert-box">
-                                <h6 class="mb-0 fw-bold fs-6" id="exit-message"></h6>
-                                <small id="exit-auto-timer-wrap" class="text-muted mt-1 d-none" style="font-size: 11px;">
-                                    Tự động cho ra sau <span id="exit-auto-timer" class="fw-bold">10</span> giây...
-                                </small>
-                                <button type="button" id="btn-exit-retry-inline" class="btn btn-sm btn-outline-danger fw-bold mt-2" style="display: none;">
-                                    <i class="material-icons-outlined align-middle me-1" style="font-size: 16px;">refresh</i> Làm lại
-                                </button>
-                            </div>
+                    <div class="input-group mb-2 shadow-sm">
+                        <span class="input-group-text bg-light text-danger fw-bold small"><i class="material-icons-outlined me-1 fs-6">qr_code</i> Mã Code</span>
+                        <input type="text" id="exit-code" class="form-control text-uppercase fw-bold" placeholder="Nhập mã" maxlength="6">
+                    </div>
+                    <small id="exit-code-arm-hint" class="text-muted d-block mb-2" style="font-size: 13px;">
+                        Nhập mã 6 ký tự để ĐT bắt đầu quét
+                    </small>
+
+                    <div id="exit-result" class="mt-2" style="display: none;">
+                        <div class="alert mb-0 shadow-sm p-2 text-start" id="exit-alert-box">
+                            <h6 class="mb-0 fw-bold fs-6" id="exit-message"></h6>
+                            <small id="exit-auto-timer-wrap" class="text-muted mt-1 d-none" style="font-size: 11px;">
+                                Tự động cho ra sau <span id="exit-auto-timer" class="fw-bold">10</span> giây...
+                            </small>
+                            <button type="button" id="btn-exit-retry-inline" class="btn btn-sm btn-outline-danger fw-bold mt-2" style="display: none;">
+                                <i class="material-icons-outlined align-middle me-1" style="font-size: 16px;">refresh</i> Làm lại
+                            </button>
                         </div>
                     </div>
                 </div>

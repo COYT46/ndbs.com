@@ -90,7 +90,7 @@
                                                                     <span>Bảo vệ check-in:</span> <strong class="text-dark">{{ $log->guardIn->fullname ?? 'N/A' }}</strong>
                                                                 </li>
                                                                 <li class="list-group-item d-flex justify-content-between">
-                                                                    <span>Trạng thái check-out:</span>
+                                                                    <span>Trạng thái:</span>
                                                                     @if($log->is_valid === 0 || $log->is_valid === false)
                                                                         <span class="badge bg-danger">Không hợp lệ</span>
                                                                     @else
