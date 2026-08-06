@@ -56,6 +56,17 @@ class AuthController extends Controller
 
     public function logout(Request $request)
     {
+        // Hủy mã kích hoạt quét xe ra — tránh còn "Đã kích hoạt" sau khi đăng nhập lại
+        $armedPath = storage_path('app' . DIRECTORY_SEPARATOR . 'armed_exit_code.json');
+        if (is_file($armedPath)) {
+            @unlink($armedPath);
+        }
+        try {
+            \Illuminate\Support\Facades\Cache::forget('armed_exit_code');
+        } catch (\Throwable $e) {
+            // ignore
+        }
+
         Auth::logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();

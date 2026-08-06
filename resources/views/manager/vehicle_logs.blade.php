@@ -412,12 +412,31 @@
         }
 
         $(document).ready(function() {
+            const TAB_KEY = 'vehicle_logs_active_tab';
+
+            // Khôi phục tab sau F5
+            const savedTab = localStorage.getItem(TAB_KEY);
+            if (savedTab === 'completed') {
+                const completedTab = document.querySelector('#completed-tab');
+                if (completedTab && window.bootstrap && bootstrap.Tab) {
+                    bootstrap.Tab.getOrCreateInstance(completedTab).show();
+                } else if (completedTab) {
+                    $(completedTab).tab('show');
+                }
+            }
+
             initDataTables();
             // Tự động fetch làm mới sau mỗi 5 giây
             setInterval(refreshVehicleLogsWithFetch, 5000);
 
-            // Khi chuyển tab sang bảng xe đã ra, căn chỉnh lại độ rộng cột DataTables
+            // Lưu tab đang mở + căn chỉnh DataTables khi đổi tab
             $('button[data-bs-toggle="tab"]').on('shown.bs.tab', function (e) {
+                const target = $(e.target).attr('data-bs-target');
+                if (target === '#completed') {
+                    localStorage.setItem(TAB_KEY, 'completed');
+                } else {
+                    localStorage.setItem(TAB_KEY, 'pending');
+                }
                 $.fn.dataTable.tables({ visible: true, api: true }).columns.adjust();
             });
         });

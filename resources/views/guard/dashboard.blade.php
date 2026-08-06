@@ -88,14 +88,19 @@
                     </small>
 
                     <div id="exit-result" class="mt-2" style="display: none;">
-                        <div class="alert mb-0 shadow-sm p-2 text-start" id="exit-alert-box">
-                            <h6 class="mb-0 fw-bold fs-6" id="exit-message"></h6>
-                            <small id="exit-auto-timer-wrap" class="text-muted mt-1 d-none" style="font-size: 11px;">
-                                Tự động cho ra sau <span id="exit-auto-timer" class="fw-bold">10</span> giây...
-                            </small>
-                            <button type="button" id="btn-exit-retry-inline" class="btn btn-sm btn-outline-danger fw-bold mt-2" style="display: none;">
-                                <i class="material-icons-outlined align-middle me-1" style="font-size: 16px;">refresh</i> Làm lại
-                            </button>
+                        <div class="alert mb-0 shadow-sm p-2 text-center" id="exit-alert-box">
+                            <div class="d-flex flex-column align-items-center justify-content-center gap-1">
+                                <div class="d-flex align-items-center justify-content-center gap-2 flex-wrap">
+                                    <i class="material-icons-outlined flex-shrink-0" id="exit-alert-icon" style="font-size: 22px; line-height: 1;">check_circle</i>
+                                    <h6 class="mb-0 fw-bold fs-6" id="exit-message"></h6>
+                                </div>
+                                <div id="exit-auto-timer-wrap" class="text-muted d-none" style="font-size: 11px;">
+                                    Tự động cho ra sau <span id="exit-auto-timer" class="fw-bold">10</span> giây...
+                                </div>
+                                <button type="button" id="btn-exit-retry-inline" class="btn btn-sm btn-outline-danger fw-bold mt-1" style="display: none;">
+                                    <i class="material-icons-outlined align-middle me-1" style="font-size: 16px;">refresh</i> Làm lại
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -680,9 +685,8 @@ $(document).ready(function() {
             .done(function(res) {
                 if (res && res.success) {
                     $('#exit-auto-timer-wrap').addClass('d-none');
-                    $('#exit-message').html(
-                        '<i class="material-icons-outlined align-middle me-1">check_circle</i> Đã cho phép xe ra!'
-                    );
+                    $('#exit-alert-icon').text('check_circle');
+                    $('#exit-message').html('Đã cho phép xe ra!');
                     $('#comp-status-badge').text('Đã cho ra thành công');
                     setTimeout(function() {
                         resetExitAndComparison();
@@ -805,9 +809,9 @@ $(document).ready(function() {
         if (data.match) {
             // Biển khớp → đếm giây rồi tự động cho ra (giống làm mới sau xe vào)
             alertBox.removeClass('alert-danger alert-info').addClass('alert-success');
+            $('#exit-alert-icon').text('check_circle');
             $('#exit-message').html(
-                '<i class="material-icons-outlined align-middle me-1">check_circle</i> Biển số khớp: <strong>' +
-                (data.exit_plate || data.entry_plate || '') + '</strong>'
+                'Biển số khớp: <strong>' + (data.exit_plate || data.entry_plate || '') + '</strong>'
             );
             $('#validation-buttons').hide();
             let seconds = 10;
@@ -826,7 +830,8 @@ $(document).ready(function() {
             }, 1000);
         } else {
             alertBox.removeClass('alert-success alert-info').addClass('alert-danger');
-            $('#exit-message').html('<i class="material-icons-outlined align-middle me-1">warning</i> ' + (data.message || ''));
+            $('#exit-alert-icon').text('warning');
+            $('#exit-message').text(data.message || 'Biển số không khớp');
             $('#exit-auto-timer-wrap').addClass('d-none');
             $('#comp-status-badge').removeClass('bg-warning bg-success text-dark').addClass('bg-danger text-white')
                 .text('BSX không trùng — cần xác nhận thủ công');
@@ -839,11 +844,12 @@ $(document).ready(function() {
         $('#exit-code').prop('disabled', false);
         const alertBox = $('#exit-alert-box');
         alertBox.removeClass('alert-success alert-info').addClass('alert-danger');
+        $('#exit-alert-icon').text('error');
         $('#exit-message').html(
-            '<i class="material-icons-outlined align-middle me-1">error</i> ' +
             (message || 'Có lỗi xảy ra') +
             '<div class="small fw-normal mt-1">Sửa mã rồi để ĐT quét lại, hoặc bấm Làm lại.</div>'
         );
+        $('#exit-auto-timer-wrap').addClass('d-none');
         $('#btn-exit-retry-inline').show();
         $('#exit-result').show();
         $('#validation-buttons').hide();
@@ -869,10 +875,14 @@ $(document).ready(function() {
                     if (res.entry_alert && res.entry_alert.id) {
                         lastSeenEntryAlertId = String(res.entry_alert.id);
                     }
+                    // F5 / mở lại trang → hủy mã kích hoạt cũ (không giữ "Đã kích hoạt")
+                    lastArmedCode = '';
+                    lastArmFailedCode = '';
+                    $('#exit-code').val('');
+                    $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
+                        .text('Nhập mã 6 ký tự để ĐT bắt đầu quét');
                     if (res.armed_exit_code) {
-                        lastArmedCode = String(res.armed_exit_code).toUpperCase();
-                        $('#exit-code-arm-hint').removeClass('text-muted text-danger').addClass('text-success')
-                            .text('Đã kích hoạt — mã ' + lastArmedCode);
+                        $.post(API.clearExit);
                     }
                     monitorBootstrapped = true;
                     return;
