@@ -833,7 +833,14 @@ class ApiController extends Controller
         return response()->json([
             'success' => true,
             'pending' => $pendingLogs,
-            'completed' => $completedLogs
+            'completed' => $completedLogs,
+            'pending_count' => VehicleLog::where(function ($query) {
+                $query->where('status', 'in')->orWhere('is_valid', false);
+            })->count(),
+            'completed_count' => VehicleLog::where('status', 'out')
+                ->where(function ($query) {
+                    $query->whereNull('is_valid')->orWhere('is_valid', true);
+                })->count(),
         ], 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
     }
 

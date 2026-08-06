@@ -16,13 +16,13 @@
             <li class="nav-item" role="presentation">
                 <button class="nav-link active fw-bold px-4 py-2" id="pending-tab" data-bs-toggle="tab" data-bs-target="#pending" type="button" role="tab" aria-controls="pending" aria-selected="true">
                     <i class="material-icons-outlined align-middle me-1">login</i> Xe vào chưa ra
-                    <span class="badge bg-danger ms-1">{{ $pendingLogs->count() }}</span>
+                    <span class="badge bg-danger ms-1" id="pending-count-badge">{{ $pendingLogs->count() }}</span>
                 </button>
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link fw-bold px-4 py-2" id="completed-tab" data-bs-toggle="tab" data-bs-target="#completed" type="button" role="tab" aria-controls="completed" aria-selected="false">
                     <i class="material-icons-outlined align-middle me-1">check_circle</i> Xe vào đã ra
-                    <span class="badge bg-success ms-1">{{ $completedLogs->count() }}</span>
+                    <span class="badge bg-success ms-1" id="completed-count-badge">{{ $completedLogs->count() }}</span>
                 </button>
             </li>
         </ul>
@@ -390,6 +390,16 @@
                         });
                         $('#completedTable tbody').html(completedHtml);
                         $('#dynamic-modals-container').html(modalsHtml);
+
+                        // Cập nhật số trên tab (không cần F5)
+                        const pendingCount = (typeof res.pending_count === 'number')
+                            ? res.pending_count
+                            : (res.pending ? res.pending.length : 0);
+                        const completedCount = (typeof res.completed_count === 'number')
+                            ? res.completed_count
+                            : (res.completed ? res.completed.length : 0);
+                        $('#pending-count-badge').text(pendingCount);
+                        $('#completed-count-badge').text(completedCount);
 
                         initDataTables();
 
