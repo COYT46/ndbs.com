@@ -203,6 +203,14 @@ $(document).ready(function() {
     let entryCooldown = false;
     let exitLocked = false;
 
+    // F5 (reload) mới hủy đối chiếu chưa xác nhận — không hủy khi chỉ tắt camera ĐT
+    try {
+        const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+        if (nav && nav.type === 'reload') {
+            $.post(API.retryExit, {});
+        }
+    } catch (e) {}
+
     function clearExitTimer() {
         if (exitTimerInterval) {
             clearInterval(exitTimerInterval);

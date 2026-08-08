@@ -193,7 +193,7 @@
                                                             </div>
                                                             <ul class="list-group list-group-flush fs-6">
                                                                 <li class="list-group-item d-flex justify-content-between">
-                                                                    <span>Xác nhận:</span> <span class="badge bg-success">Hợp lệ</span>
+                                                                    <span>Trạng thái:</span> <span class="badge bg-success">Hợp lệ</span>
                                                                 </li>
                                                                 <li class="list-group-item d-flex justify-content-between">
                                                                     <span>BSX ra:</span> <strong class="text-success fs-5">{{ $log->exit_plate_number ?? $log->plate_number }}</strong>

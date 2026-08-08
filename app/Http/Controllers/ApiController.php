@@ -760,7 +760,8 @@ class ApiController extends Controller
     }
 
     /**
-     * Hủy lượt đối chiếu xe ra (sai mã / biển lỗi) → cho phép nhập mã và quét lại.
+     * Hủy lượt đối chiếu xe ra (sai mã / biển lỗi / F5 chưa xác nhận) → cho phép nhập mã và quét lại.
+     * Không truyền log_id → hủy mọi lượt đang chờ xác nhận.
      */
     public function retryExitAttempt(Request $request)
     {
@@ -776,6 +777,18 @@ class ApiController extends Controller
                     'guard_out_id' => null,
                 ]);
             }
+        } else {
+            // F5 / mở lại trang giám sát hoặc nhận diện ảnh — về mặc định
+            VehicleLog::where('status', 'in')
+                ->whereNull('is_valid')
+                ->whereNotNull('exit_image')
+                ->update([
+                    'exit_time' => null,
+                    'exit_image' => null,
+                    'exit_plate_number' => null,
+                    'is_valid' => null,
+                    'guard_out_id' => null,
+                ]);
         }
 
         $this->clearArmedExitCodeStorage();

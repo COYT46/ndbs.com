@@ -857,6 +857,17 @@ $(document).ready(function() {
             .text('Lỗi — có thể làm lại');
     }
 
+    function isPageReload() {
+        try {
+            const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+            if (nav && nav.type === 'reload') return true;
+        } catch (e) {}
+        try {
+            if (performance.navigation && performance.navigation.type === 1) return true;
+        } catch (e) {}
+        return false;
+    }
+
     function pollMonitor() {
         $.get(API.monitor)
             .done(function(res) {
@@ -864,27 +875,55 @@ $(document).ready(function() {
 
                 // LIVE đã poll riêng — không apply ở đây để tránh đè chậm
 
-                // Lần poll đầu sau F5: chỉ ghi nhận ID hiện có, KHÔNG hiện dữ liệu cũ lên màn hình
+                // Lần poll đầu: F5 → về mặc định; vào trang bình thường → giữ đối chiếu đang chờ
                 if (!monitorBootstrapped) {
                     if (res.last_entry && res.last_entry.id) {
                         lastSeenEntryId = res.last_entry.id;
                     }
-                    if (res.pending_validation && res.pending_validation.log_id) {
-                        lastSeenPendingId = res.pending_validation.log_id;
-                    }
                     if (res.entry_alert && res.entry_alert.id) {
                         lastSeenEntryAlertId = String(res.entry_alert.id);
                     }
-                    // F5 / mở lại trang → hủy mã kích hoạt cũ (không giữ "Đã kích hoạt")
-                    lastArmedCode = '';
-                    lastArmFailedCode = '';
-                    $('#exit-code').val('');
-                    $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
-                        .text('Nhập mã 6 ký tự để ĐT bắt đầu quét');
-                    if (res.armed_exit_code) {
-                        $.post(API.clearExit);
+
+                    if (isPageReload()) {
+                        // F5: hủy pending + mã kích hoạt, UI về mặc định
+                        if (res.pending_validation && res.pending_validation.log_id) {
+                            lastSeenPendingId = res.pending_validation.log_id;
+                        } else {
+                            lastSeenPendingId = null;
+                        }
+                        currentLogId = null;
+                        exitLockedByPending = false;
+                        clearExitTimer();
+                        autoExitInProgress = false;
+                        $('#exit-result').hide();
+                        $('#validation-buttons').hide();
+                        $('#exit-code').prop('disabled', false).val('');
+                        $('#comp-entry-img, #comp-exit-img').hide().attr('src', '');
+                        $('#comp-entry-empty, #comp-exit-empty').show();
+                        $('#comp-entry-plate, #comp-exit-plate').text('-');
+                        $('#comp-status-badge').removeClass('bg-success bg-danger text-white').addClass('bg-warning text-dark')
+                            .text('Đang chờ nhận diện xe ra...');
+                        lastArmedCode = '';
+                        lastArmFailedCode = '';
+                        $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
+                            .text('Nhập mã 6 ký tự để ĐT bắt đầu quét');
+
+                        const clearJobs = [$.post(API.retryExit, {})];
+                        if (res.armed_exit_code) {
+                            clearJobs.push($.post(API.clearExit));
+                        }
+                        $.when.apply($, clearJobs).always(function() {
+                            lastSeenPendingId = null;
+                            monitorBootstrapped = true;
+                        });
+                    } else {
+                        // Vào trang / tắt cam ĐT: giữ nguyên đối chiếu nếu đang chờ xác nhận
+                        if (res.pending_validation && res.pending_validation.log_id) {
+                            lastSeenPendingId = res.pending_validation.log_id;
+                            showPendingValidation(res.pending_validation);
+                        }
+                        monitorBootstrapped = true;
                     }
-                    monitorBootstrapped = true;
                     return;
                 }
 
@@ -905,7 +944,8 @@ $(document).ready(function() {
 
                 const pending = res.pending_validation;
                 if (pending && pending.log_id) {
-                    if (pending.log_id !== lastSeenPendingId || currentLogId !== pending.log_id) {
+                    // Chỉ hiện lượt mới — không hiện lại sau F5 (đã hủy pending lúc bootstrap)
+                    if (pending.log_id !== lastSeenPendingId) {
                         lastSeenPendingId = pending.log_id;
                         showPendingValidation(pending);
                     }

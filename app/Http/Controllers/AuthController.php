@@ -67,6 +67,22 @@ class AuthController extends Controller
             // ignore
         }
 
+        // Hủy đối chiếu xe ra chưa xác nhận (F5 / đăng xuất không bấm Hợp lệ)
+        try {
+            \App\Models\VehicleLog::where('status', 'in')
+                ->whereNull('is_valid')
+                ->whereNotNull('exit_image')
+                ->update([
+                    'exit_time' => null,
+                    'exit_image' => null,
+                    'exit_plate_number' => null,
+                    'is_valid' => null,
+                    'guard_out_id' => null,
+                ]);
+        } catch (\Throwable $e) {
+            // ignore
+        }
+
         Auth::logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();
