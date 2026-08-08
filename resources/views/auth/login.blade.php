@@ -35,6 +35,16 @@
                         <p class="mb-0">Vui lòng đăng nhập bằng tài khoản của bạn</p>
 
                         <div class="form-body mt-4">
+                            @if (session('force_logout_message'))
+                                <div class="alert alert-warning alert-dismissible fade show auto-dismiss-logout-alert" role="alert">
+                                    {{ session('force_logout_message') }}
+                                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                                </div>
+                            @endif
+                            <div id="force-logout-client-alert" class="alert alert-warning alert-dismissible fade show d-none" role="alert">
+                                <span class="force-logout-text"></span>
+                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                            </div>
                             @if ($errors->any())
                                 <div class="alert alert-danger">
                                     @foreach ($errors->all() as $error)
@@ -83,6 +93,22 @@
         });
 
         $(document).ready(function() {
+            try {
+                var clientMsg = sessionStorage.getItem('force_logout_message');
+                if (clientMsg) {
+                    sessionStorage.removeItem('force_logout_message');
+                    var $box = $('#force-logout-client-alert');
+                    $box.find('.force-logout-text').text(clientMsg);
+                    $box.removeClass('d-none');
+                }
+            } catch (e) {}
+
+            setTimeout(function() {
+                $('.auto-dismiss-logout-alert, #force-logout-client-alert:not(.d-none)').fadeOut(400, function() {
+                    $(this).remove();
+                });
+            }, 4500);
+
             var submitting = false;
             $('#login-form').on('submit', function() {
                 if (submitting) {

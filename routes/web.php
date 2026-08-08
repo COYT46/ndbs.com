@@ -12,7 +12,11 @@ Route::get('/login', [AuthController::class, 'getLogin'])->name('login');
 Route::post('/login', [AuthController::class, 'postLogin']);
 Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
 
-Route::middleware(['auth'])->group(function () {
+Route::middleware(['auth', 'account.active'])->group(function () {
+    Route::get('/account/status', function () {
+        return response()->json(['ok' => true]);
+    })->name('account.status');
+
     // Manager Routes
     Route::prefix('manager')->group(function () {
         Route::get('/dashboard', [ManagerController::class, 'dashboard'])->name('manager.dashboard');

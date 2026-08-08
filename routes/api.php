@@ -8,7 +8,7 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
 
-Route::middleware(['web', 'auth', 'session.release'])->group(function () {
+Route::middleware(['web', 'auth', 'account.active', 'session.release'])->group(function () {
     Route::middleware('throttle:api')->group(function () {
         Route::post('/recognize-preview', [ApiController::class, 'recognizePreview'])->name('api.recognize_preview');
         Route::post('/detect-preview', [ApiController::class, 'detectPreview'])->name('api.detect_preview');
