@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
 
 use App\Models\VehicleLog;
 
@@ -26,9 +27,21 @@ class ManagerController extends Controller
         if (auth()->user()->role !== 'manager') return redirect('/');
         
         $request->validate([
-            'fullname' => 'required|string|max:255',
+            'fullname' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('users', 'fullname')->where(function ($q) {
+                    $q->where('deleted', 0)->where('role', 'guard');
+                }),
+            ],
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:6',
+        ], [
+            'fullname.unique' => 'Họ và tên này đã được sử dụng.',
+            'email.unique' => 'Email này đã được sử dụng.',
+            'password.required' => 'Vui lòng nhập mật khẩu.',
+            'password.min' => 'Mật khẩu phải có ít nhất 6 ký tự.',
         ]);
 
         User::create([
@@ -61,9 +74,22 @@ class ManagerController extends Controller
         if ($guard->role !== 'guard') return redirect()->back()->withErrors(['error' => 'Không hợp lệ']);
 
         $request->validate([
-            'fullname' => 'required|string|max:255',
+            'fullname' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('users', 'fullname')
+                    ->ignore($guard->id)
+                    ->where(function ($q) {
+                        $q->where('deleted', 0)->where('role', 'guard');
+                    }),
+            ],
             'email' => 'required|string|email|max:255|unique:users,email,' . $guard->id,
             'password' => 'nullable|string|min:6',
+        ], [
+            'fullname.unique' => 'Họ và tên này đã được sử dụng.',
+            'email.unique' => 'Email này đã được sử dụng.',
+            'password.min' => 'Mật khẩu phải có ít nhất 6 ký tự.',
         ]);
 
         $guard->fullname = $request->fullname;

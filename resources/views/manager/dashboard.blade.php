@@ -13,15 +13,19 @@
                     </div>
                     <hr>
                     @if (session('success'))
-                        <div class="alert alert-success">{{ session('success') }}</div>
+                        <div class="alert alert-success alert-dismissible fade show auto-dismiss-alert" role="alert">
+                            {{ session('success') }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                        </div>
                     @endif
-                    @if ($errors->any())
-                        <div class="alert alert-danger">
-                            <ul class="mb-0">
-                                @foreach ($errors->all() as $error)
-                                    <li>{{ $error }}</li>
-                                @endforeach
-                            </ul>
+                    @if ($errors->any() && !old('_edit_guard_id'))
+                        <div class="alert alert-danger alert-dismissible fade show auto-dismiss-alert" role="alert">
+                            @foreach ($errors->all() as $error)
+                                @if ($error !== '')
+                                    <div>{{ $error }}</div>
+                                @endif
+                            @endforeach
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                         </div>
                     @endif
                     <div class="table-responsive">
@@ -107,6 +111,7 @@
                                                             method="POST">
                                                             @csrf
                                                             @method('PUT')
+                                                            <input type="hidden" name="_edit_guard_id" value="{{ $guard->id }}">
                                                             <div class="modal-header bg-primary text-white">
                                                                 <h5 class="modal-title text-white">Sửa tài khoản bảo vệ
                                                                     #{{ $guard->id }}</h5>
@@ -114,16 +119,32 @@
                                                                     data-bs-dismiss="modal" aria-label="Close"></button>
                                                             </div>
                                                             <div class="modal-body text-start">
+                                                                @if ($errors->any() && (string) old('_edit_guard_id') === (string) $guard->id)
+                                                                    <div class="alert alert-danger py-2 edit-guard-error" role="alert">
+                                                                        @foreach ($errors->all() as $error)
+                                                                            @if ($error !== '')
+                                                                                <div>{{ $error }}</div>
+                                                                            @endif
+                                                                        @endforeach
+                                                                    </div>
+                                                                @endif
+                                                                @php
+                                                                    $isThisEdit = (string) old('_edit_guard_id') === (string) $guard->id;
+                                                                @endphp
                                                                 <div class="mb-3">
                                                                     <label class="form-label fw-bold">Họ và tên</label>
                                                                     <input type="text" class="form-control"
-                                                                        name="fullname" value="{{ $guard->fullname }}"
+                                                                        name="fullname"
+                                                                        value="{{ $isThisEdit && !$errors->has('fullname') ? old('fullname', $guard->fullname) : $guard->fullname }}"
+                                                                        data-original="{{ $guard->fullname }}"
                                                                         required>
                                                                 </div>
                                                                 <div class="mb-3">
                                                                     <label class="form-label fw-bold">Email</label>
                                                                     <input type="email" class="form-control"
-                                                                        name="email" value="{{ $guard->email }}"
+                                                                        name="email"
+                                                                        value="{{ $isThisEdit && !$errors->has('email') ? old('email', $guard->email) : $guard->email }}"
+                                                                        data-original="{{ $guard->email }}"
                                                                         required>
                                                                 </div>
                                                                 <div class="mb-3">
@@ -210,12 +231,14 @@
                         @csrf
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Họ và tên</label>
-                            <input type="text" class="form-control" name="fullname" value="{{ old('fullname') }}"
+                            <input type="text" class="form-control" name="fullname"
+                                value="{{ old('_edit_guard_id') ? '' : old('fullname') }}"
                                 placeholder="Nhập họ tên bảo vệ" required>
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Email</label>
-                            <input type="email" class="form-control" name="email" value="{{ old('email') }}"
+                            <input type="email" class="form-control" name="email"
+                                value="{{ old('_edit_guard_id') ? '' : old('email') }}"
                                 placeholder="email@example.com" required>
                         </div>
                         <div class="mb-3">
@@ -231,3 +254,45 @@
         </div>
     </div>
 @endsection
+
+@push('js')
+<script>
+    $(document).ready(function() {
+        // Tự ẩn thông báo sau 3.5 giây
+        setTimeout(function() {
+            $('.auto-dismiss-alert').each(function() {
+                const el = this;
+                if (window.bootstrap && bootstrap.Alert) {
+                    bootstrap.Alert.getOrCreateInstance(el).close();
+                } else {
+                    $(el).fadeOut(400, function() { $(this).remove(); });
+                }
+            });
+        }, 3500);
+
+        // Đóng modal sửa → trả form về giá trị đã lưu trong DB
+        document.querySelectorAll('[id^="editGuardModal"]').forEach(function(modalEl) {
+            modalEl.addEventListener('hidden.bs.modal', function() {
+                const form = modalEl.querySelector('form');
+                if (!form) return;
+                const fullname = form.querySelector('[name="fullname"]');
+                const email = form.querySelector('[name="email"]');
+                const password = form.querySelector('[name="password"]');
+                if (fullname) fullname.value = fullname.getAttribute('data-original') || '';
+                if (email) email.value = email.getAttribute('data-original') || '';
+                if (password) password.value = '';
+                const err = form.querySelector('.edit-guard-error');
+                if (err) err.remove();
+            });
+        });
+
+        // Lỗi khi sửa → mở lại modal tương ứng
+        @if ($errors->any() && old('_edit_guard_id'))
+            const editModal = document.getElementById('editGuardModal{{ old('_edit_guard_id') }}');
+            if (editModal && window.bootstrap && bootstrap.Modal) {
+                bootstrap.Modal.getOrCreateInstance(editModal).show();
+            }
+        @endif
+    });
+</script>
+@endpush
