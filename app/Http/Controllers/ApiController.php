@@ -852,15 +852,21 @@ class ApiController extends Controller
 
     public function getRecentLogs()
     {
-        $uid = auth()->id();
+        $user = auth()->user();
+        $uid = $user ? (int) $user->id : 0;
+        $isManager = ($user->role ?? null) === 'manager';
 
-        $pendingLogs = VehicleLog::with('guardIn')
-            ->where('guard_in_id', $uid)
+        // Manager xem toàn bộ; bảo vệ chỉ xem log liên quan tài khoản mình
+        $pendingQuery = VehicleLog::with('guardIn')
             ->where(function ($query) {
                 $query->where('status', 'in')->orWhere('is_valid', false);
-            })
+            });
+        if (!$isManager) {
+            $pendingQuery->where('guard_in_id', $uid)->take(50);
+        }
+
+        $pendingLogs = $pendingQuery
             ->orderBy('entry_time', 'desc')
-            ->take(50)
             ->get()
             ->map(function ($log) {
                 return [
@@ -874,16 +880,20 @@ class ApiController extends Controller
                 ];
             });
 
-        $completedLogs = VehicleLog::with(['guardIn', 'guardOut'])
-            ->where(function ($q) use ($uid) {
-                $q->where('guard_in_id', $uid)->orWhere('guard_out_id', $uid);
-            })
+        $completedQuery = VehicleLog::with(['guardIn', 'guardOut'])
             ->where('status', 'out')
             ->where(function ($query) {
                 $query->whereNull('is_valid')->orWhere('is_valid', true);
-            })
+            });
+        if (!$isManager) {
+            $completedQuery->where(function ($q) use ($uid) {
+                $q->where('guard_in_id', $uid)->orWhere('guard_out_id', $uid);
+            });
+            $completedQuery->take(50);
+        }
+
+        $completedLogs = $completedQuery
             ->orderBy('exit_time', 'desc')
-            ->take(50)
             ->get()
             ->map(function ($log) {
                 return [
@@ -900,21 +910,31 @@ class ApiController extends Controller
                 ];
             });
 
+        $pendingCountQuery = VehicleLog::query()
+            ->where(function ($query) {
+                $query->where('status', 'in')->orWhere('is_valid', false);
+            });
+        if (!$isManager) {
+            $pendingCountQuery->where('guard_in_id', $uid);
+        }
+
+        $completedCountQuery = VehicleLog::query()
+            ->where('status', 'out')
+            ->where(function ($query) {
+                $query->whereNull('is_valid')->orWhere('is_valid', true);
+            });
+        if (!$isManager) {
+            $completedCountQuery->where(function ($q) use ($uid) {
+                $q->where('guard_in_id', $uid)->orWhere('guard_out_id', $uid);
+            });
+        }
+
         return response()->json([
             'success' => true,
             'pending' => $pendingLogs,
             'completed' => $completedLogs,
-            'pending_count' => VehicleLog::where('guard_in_id', $uid)
-                ->where(function ($query) {
-                    $query->where('status', 'in')->orWhere('is_valid', false);
-                })->count(),
-            'completed_count' => VehicleLog::where(function ($q) use ($uid) {
-                    $q->where('guard_in_id', $uid)->orWhere('guard_out_id', $uid);
-                })
-                ->where('status', 'out')
-                ->where(function ($query) {
-                    $query->whereNull('is_valid')->orWhere('is_valid', true);
-                })->count(),
+            'pending_count' => $pendingCountQuery->count(),
+            'completed_count' => $completedCountQuery->count(),
         ], 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
     }
 

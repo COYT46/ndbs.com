@@ -266,10 +266,26 @@
             // Nếu người dùng đang đặt con trỏ chuột trong ô tìm kiếm (đang gõ dở) thì tạm dừng refresh ngầm
             if (!force && $('input[type="search"]').is(':focus')) return;
 
-            fetch('{{ route("api.recent_logs") }}')
-                .then(response => response.json())
+            fetch('{{ route("api.recent_logs") }}', {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    credentials: 'same-origin',
+                    cache: 'no-store'
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        // Giữ bảng hiện tại khi 401/403/419/500 — không xóa về 0
+                        throw new Error('HTTP ' + response.status);
+                    }
+                    return response.json();
+                })
                 .then(res => {
-                    if (res.success) {
+                    if (!res || !res.success || !Array.isArray(res.pending) || !Array.isArray(res.completed)) {
+                        return;
+                    }
                         let pendingSearch = $.fn.DataTable.isDataTable('#pendingTable') ? $('#pendingTable').DataTable().search() : '';
                         let completedSearch = $.fn.DataTable.isDataTable('#completedTable') ? $('#completedTable').DataTable().search() : '';
 
@@ -406,7 +422,6 @@
                         // Khôi phục lại từ khóa tìm kiếm nếu có trước khi refresh
                         if (pendingSearch) $('#pendingTable').DataTable().search(pendingSearch).draw(false);
                         if (completedSearch) $('#completedTable').DataTable().search(completedSearch).draw(false);
-                    }
                 })
                 .catch(err => console.error('Lỗi khi fetch dữ liệu lịch sử xe:', err));
         }
