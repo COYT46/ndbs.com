@@ -11,6 +11,12 @@ Route::get('/', function () {
 Route::get('/login', [AuthController::class, 'getLogin'])->name('login');
 Route::post('/login', [AuthController::class, 'postLogin']);
 Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
+// ĐT đổi tài khoản: lấy CSRF mới trước khi submit login/logout (tránh 419)
+Route::get('/csrf-token', function () {
+    return response()->json([
+        'token' => csrf_token(),
+    ])->header('Cache-Control', 'no-store, no-cache, must-revalidate');
+})->name('csrf.token');
 
 Route::middleware(['auth', 'account.active'])->group(function () {
     Route::get('/account/status', function () {

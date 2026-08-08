@@ -27,6 +27,22 @@ class ApiController extends Controller
         }
     }
 
+    /**
+     * Mỗi tài khoản guard có kênh LIVE / WebRTC / alert riêng — không chia sẻ giữa các user.
+     */
+    private function currentUserScopeId()
+    {
+        return max(0, (int) auth()->id());
+    }
+
+    private function ensureDir($dir)
+    {
+        if (!file_exists($dir)) {
+            @mkdir($dir, 0777, true);
+        }
+        return $dir;
+    }
+
     private function getPythonExecutable()
     {
         $envPython = env('PYTHON_PATH');
@@ -531,6 +547,7 @@ class ApiController extends Controller
             $stillInside = null;
             if ($cleanPlate !== '') {
                 $stillInside = VehicleLog::where('status', 'in')
+                    ->where('guard_in_id', auth()->id())
                     ->whereRaw(
                         "REPLACE(REPLACE(REPLACE(UPPER(plate_number), '-', ''), ' ', ''), '.', '') = ?",
                         [$cleanPlate]
@@ -682,8 +699,10 @@ class ApiController extends Controller
                 'is_valid' => null,
             ]);
 
-            // Đã dùng mã → tắt kích hoạt quét ra trên ĐT
-            $this->clearArmedExitCodeStorage();
+            // Tắt kích hoạt local (ĐT ngừng quét) nhưng GIỮ khóa toàn cục
+            // → tài khoản khác vẫn thấy "đang được tài khoản khác sử dụng" khi đang đối chiếu
+            $this->clearLocalArmedExitCodeOnly();
+            $this->touchGlobalArmedCode(strtoupper((string) $log->code), $log->id);
 
             return response()->json([
                 'success' => true,
@@ -725,6 +744,15 @@ class ApiController extends Controller
             ]);
         }
 
+        $uid = auth()->id();
+        // Chỉ tài khoản đã quét xe ra mới được xác nhận đối chiếu
+        if ((int) $log->guard_out_id !== (int) $uid) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Không có quyền xác nhận lượt này.'
+            ], 403);
+        }
+
         $isValid = filter_var($request->is_valid, FILTER_VALIDATE_BOOLEAN);
 
         if ($isValid) {
@@ -735,6 +763,10 @@ class ApiController extends Controller
                 'guard_out_id' => auth()->id(),
                 'is_valid' => true
             ]);
+
+            // Nhả khóa — tài khoản khác sẽ nhận "Mã không tồn tại"
+            $this->clearLocalArmedExitCodeOnly();
+            $this->releaseGlobalArmedCode(strtoupper((string) $log->code));
 
             return response()->json([
                 'success' => true,
@@ -751,7 +783,9 @@ class ApiController extends Controller
             'is_valid' => false,
             'guard_out_id' => auth()->id()
         ]);
-        $this->clearArmedExitCodeStorage();
+        // Nhả khóa — tài khoản khác có thể kích hoạt lại (xanh)
+        $this->clearLocalArmedExitCodeOnly();
+        $this->releaseGlobalArmedCode(strtoupper((string) $log->code));
 
         return response()->json([
             'success' => true,
@@ -767,8 +801,12 @@ class ApiController extends Controller
     {
         $logId = $request->input('log_id');
         if ($logId) {
-            $log = VehicleLog::find($logId);
+            $uid = auth()->id();
+            $log = VehicleLog::where('id', $logId)
+                ->where('guard_out_id', $uid)
+                ->first();
             if ($log && $log->status === 'in' && $log->is_valid === null && $log->exit_image) {
+                $code = strtoupper((string) $log->code);
                 $log->update([
                     'exit_time' => null,
                     'exit_image' => null,
@@ -776,10 +814,19 @@ class ApiController extends Controller
                     'is_valid' => null,
                     'guard_out_id' => null,
                 ]);
+                $this->releaseGlobalArmedCode($code);
             }
         } else {
-            // F5 / mở lại trang giám sát hoặc nhận diện ảnh — về mặc định
+            // F5 / mở lại trang giám sát — chỉ hủy lượt đối chiếu do chính TK này quét ra
+            $uid = auth()->id();
+            $pendingLogs = VehicleLog::where('status', 'in')
+                ->where('guard_out_id', $uid)
+                ->whereNull('is_valid')
+                ->whereNotNull('exit_image')
+                ->get(['id', 'code']);
+
             VehicleLog::where('status', 'in')
+                ->where('guard_out_id', $uid)
                 ->whereNull('is_valid')
                 ->whereNotNull('exit_image')
                 ->update([
@@ -789,6 +836,10 @@ class ApiController extends Controller
                     'is_valid' => null,
                     'guard_out_id' => null,
                 ]);
+
+            foreach ($pendingLogs as $pendingLog) {
+                $this->releaseGlobalArmedCode(strtoupper((string) $pendingLog->code));
+            }
         }
 
         $this->clearArmedExitCodeStorage();
@@ -801,7 +852,10 @@ class ApiController extends Controller
 
     public function getRecentLogs()
     {
+        $uid = auth()->id();
+
         $pendingLogs = VehicleLog::with('guardIn')
+            ->where('guard_in_id', $uid)
             ->where(function ($query) {
                 $query->where('status', 'in')->orWhere('is_valid', false);
             })
@@ -821,6 +875,9 @@ class ApiController extends Controller
             });
 
         $completedLogs = VehicleLog::with(['guardIn', 'guardOut'])
+            ->where(function ($q) use ($uid) {
+                $q->where('guard_in_id', $uid)->orWhere('guard_out_id', $uid);
+            })
             ->where('status', 'out')
             ->where(function ($query) {
                 $query->whereNull('is_valid')->orWhere('is_valid', true);
@@ -847,10 +904,14 @@ class ApiController extends Controller
             'success' => true,
             'pending' => $pendingLogs,
             'completed' => $completedLogs,
-            'pending_count' => VehicleLog::where(function ($query) {
-                $query->where('status', 'in')->orWhere('is_valid', false);
-            })->count(),
-            'completed_count' => VehicleLog::where('status', 'out')
+            'pending_count' => VehicleLog::where('guard_in_id', $uid)
+                ->where(function ($query) {
+                    $query->where('status', 'in')->orWhere('is_valid', false);
+                })->count(),
+            'completed_count' => VehicleLog::where(function ($q) use ($uid) {
+                    $q->where('guard_in_id', $uid)->orWhere('guard_out_id', $uid);
+                })
+                ->where('status', 'out')
                 ->where(function ($query) {
                     $query->whereNull('is_valid')->orWhere('is_valid', true);
                 })->count(),
@@ -864,12 +925,17 @@ class ApiController extends Controller
     {
         $this->releaseSessionLock();
 
+        $uid = auth()->id();
+
         $lastEntry = VehicleLog::query()
+            ->where('guard_in_id', $uid)
             ->where('entry_time', '>=', now()->subMinutes(5))
             ->orderByDesc('id')
             ->first();
 
         $pendingValidation = VehicleLog::query()
+            // Chỉ hiện trên TK đã quét xe ra (checkout) — không hiện trên TK check-in mã đó
+            ->where('guard_out_id', $uid)
             ->whereNotNull('exit_image')
             ->whereNull('is_valid')
             ->where('status', 'in')
@@ -951,10 +1017,8 @@ class ApiController extends Controller
 
         $this->releaseSessionLock();
 
-        $dir = public_path('uploads/live');
-        if (!file_exists($dir)) {
-            @mkdir($dir, 0777, true);
-        }
+        $uid = $this->currentUserScopeId();
+        $dir = $this->ensureDir(public_path('uploads/live/' . $uid));
 
         $filename = $side . '.jpg';
         $fullPath = $dir . DIRECTORY_SEPARATOR . $filename;
@@ -978,9 +1042,9 @@ class ApiController extends Controller
 
         // Timestamp ms (Windows filemtime chỉ ~1s → LIVE bị giật/lag)
         $ts = (int) round(microtime(true) * 1000);
-        @file_put_contents($metaPath, json_encode(['ts' => $ts], JSON_UNESCAPED_SLASHES));
+        @file_put_contents($metaPath, json_encode(['ts' => $ts, 'user_id' => $uid], JSON_UNESCAPED_SLASHES));
 
-        $url = '/public/uploads/live/' . $filename . '?t=' . $ts;
+        $url = '/public/uploads/live/' . $uid . '/' . $filename . '?t=' . $ts;
         return response()->json([
             'success' => true,
             'side' => $side,
@@ -1013,7 +1077,8 @@ class ApiController extends Controller
     private function readLivePreview($side, $sinceTs = 0, $includeFrame = true)
     {
         $side = $side === 'exit' ? 'exit' : 'entry';
-        $dir = public_path('uploads/live');
+        $uid = $this->currentUserScopeId();
+        $dir = public_path('uploads/live/' . $uid);
         $fullPath = $dir . DIRECTORY_SEPARATOR . $side . '.jpg';
         $metaPath = $dir . DIRECTORY_SEPARATOR . $side . '.json';
 
@@ -1042,7 +1107,7 @@ class ApiController extends Controller
 
         $payload = [
             'active' => $active,
-            'url' => $active ? ('/public/uploads/live/' . $side . '.jpg?t=' . $ts) : null,
+            'url' => $active ? ('/public/uploads/live/' . $uid . '/' . $side . '.jpg?t=' . $ts) : null,
             'ts' => $ts,
             'frame' => null,
         ];
@@ -1068,22 +1133,30 @@ class ApiController extends Controller
         ], 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
     }
 
+    private function monitorStateDir()
+    {
+        $uid = $this->currentUserScopeId();
+        return $this->ensureDir(storage_path('app/monitor/' . $uid));
+    }
+
     private function entryAlertPath()
     {
-        $dir = storage_path('app');
-        if (!file_exists($dir)) {
-            @mkdir($dir, 0777, true);
-        }
-        return $dir . DIRECTORY_SEPARATOR . 'entry_alert.json';
+        return $this->monitorStateDir() . DIRECTORY_SEPARATOR . 'entry_alert.json';
+    }
+
+    private function entryAlertCacheKey()
+    {
+        return 'entry_alert_' . $this->currentUserScopeId();
     }
 
     private function writeEntryAlert(array $payload)
     {
         $payload['id'] = $payload['id'] ?? ('ea_' . time() . '_' . uniqid());
         $payload['ts'] = time();
+        $payload['user_id'] = $this->currentUserScopeId();
         file_put_contents($this->entryAlertPath(), json_encode($payload, JSON_UNESCAPED_UNICODE));
         try {
-            \Illuminate\Support\Facades\Cache::put('entry_alert', $payload, 90);
+            \Illuminate\Support\Facades\Cache::put($this->entryAlertCacheKey(), $payload, 90);
         } catch (\Throwable $e) {
             // ignore
         }
@@ -1093,7 +1166,7 @@ class ApiController extends Controller
     {
         $data = null;
         try {
-            $cached = \Illuminate\Support\Facades\Cache::get('entry_alert');
+            $cached = \Illuminate\Support\Facades\Cache::get($this->entryAlertCacheKey());
             if (is_array($cached) && !empty($cached['id'])) {
                 $data = $cached;
             }
@@ -1120,7 +1193,7 @@ class ApiController extends Controller
                 @unlink($path);
             }
             try {
-                \Illuminate\Support\Facades\Cache::forget('entry_alert');
+                \Illuminate\Support\Facades\Cache::forget($this->entryAlertCacheKey());
             } catch (\Throwable $e) {
                 // ignore
             }
@@ -1142,11 +1215,160 @@ class ApiController extends Controller
 
     private function armedExitCodePath()
     {
-        $dir = storage_path('app');
+        return $this->monitorStateDir() . DIRECTORY_SEPARATOR . 'armed_exit_code.json';
+    }
+
+    private function armedExitCodeCacheKey()
+    {
+        return 'armed_exit_code_' . $this->currentUserScopeId();
+    }
+
+    /**
+     * Khóa mã toàn cục (file + flock) — tài khoản nào nhập trước giữ mã,
+     * tài khoản khác nhập cùng mã trong lúc còn hiệu lực → từ chối.
+     */
+    private function globalArmedLocksPath()
+    {
+        return storage_path('app' . DIRECTORY_SEPARATOR . 'armed_exit_locks.json');
+    }
+
+    private function withGlobalArmedLocks(callable $fn)
+    {
+        $path = $this->globalArmedLocksPath();
+        $dir = dirname($path);
         if (!file_exists($dir)) {
             @mkdir($dir, 0777, true);
         }
-        return $dir . DIRECTORY_SEPARATOR . 'armed_exit_code.json';
+
+        $fp = @fopen($path, 'c+');
+        if ($fp === false) {
+            return $fn([]);
+        }
+
+        try {
+            flock($fp, LOCK_EX);
+            rewind($fp);
+            $raw = stream_get_contents($fp);
+            $locks = json_decode(is_string($raw) ? $raw : '{}', true);
+            if (!is_array($locks)) {
+                $locks = [];
+            }
+
+            $now = time();
+            foreach ($locks as $code => $row) {
+                if (!is_array($row) || ($now - (int) ($row['ts'] ?? 0)) > 300) {
+                    unset($locks[$code]);
+                }
+            }
+
+            $result = $fn($locks);
+
+            rewind($fp);
+            ftruncate($fp, 0);
+            fwrite($fp, json_encode($locks, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            fflush($fp);
+
+            return $result;
+        } finally {
+            flock($fp, LOCK_UN);
+            fclose($fp);
+        }
+    }
+
+    /**
+     * @return array{ok:bool,message?:string}
+     */
+    private function claimGlobalArmedCode($code, $logId)
+    {
+        $code = strtoupper((string) $code);
+        $uid = (int) auth()->id();
+        $logId = (int) $logId;
+
+        return $this->withGlobalArmedLocks(function (&$locks) use ($code, $logId, $uid) {
+            $holder = $locks[$code] ?? null;
+            if (is_array($holder)) {
+                $holderUid = (int) ($holder['user_id'] ?? 0);
+                if ($holderUid !== $uid) {
+                    return [
+                        'ok' => false,
+                        'message' => 'Mã đang được tài khoản khác sử dụng — không nhận mã.',
+                    ];
+                }
+            }
+
+            // Đổi mã: nhả các mã khác do chính tài khoản này đang giữ
+            foreach ($locks as $c => $row) {
+                if ($c !== $code && (int) ($row['user_id'] ?? 0) === $uid) {
+                    unset($locks[$c]);
+                }
+            }
+
+            $locks[$code] = [
+                'user_id' => $uid,
+                'log_id' => $logId,
+                'ts' => time(),
+            ];
+
+            return ['ok' => true];
+        });
+    }
+
+    private function releaseGlobalArmedCode($code = null)
+    {
+        $uid = (int) auth()->id();
+        $code = $code !== null ? strtoupper((string) $code) : null;
+
+        $this->withGlobalArmedLocks(function (&$locks) use ($uid, $code) {
+            if ($code) {
+                if (isset($locks[$code]) && (int) ($locks[$code]['user_id'] ?? 0) === $uid) {
+                    unset($locks[$code]);
+                }
+                return true;
+            }
+
+            foreach ($locks as $c => $row) {
+                if ((int) ($row['user_id'] ?? 0) === $uid) {
+                    unset($locks[$c]);
+                }
+            }
+            return true;
+        });
+    }
+
+    /**
+     * Gia hạn khóa toàn cục khi đang đối chiếu (tránh hết hạn 5 phút giữa chừng).
+     */
+    private function touchGlobalArmedCode($code, $logId)
+    {
+        $code = strtoupper((string) $code);
+        $uid = (int) auth()->id();
+        $logId = (int) $logId;
+
+        $this->withGlobalArmedLocks(function (&$locks) use ($code, $logId, $uid) {
+            $locks[$code] = [
+                'user_id' => $uid,
+                'log_id' => $logId,
+                'ts' => time(),
+                'pending' => true,
+            ];
+            return true;
+        });
+    }
+
+    /**
+     * Chỉ tắt kích hoạt local (ĐT ngừng quét) — không nhả khóa toàn cục.
+     */
+    private function clearLocalArmedExitCodeOnly()
+    {
+        $path = $this->armedExitCodePath();
+        if (is_file($path)) {
+            @unlink($path);
+        }
+        try {
+            \Illuminate\Support\Facades\Cache::forget($this->armedExitCodeCacheKey());
+        } catch (\Throwable $e) {
+            // ignore
+        }
     }
 
     private function writeArmedExitCode($code, $logId)
@@ -1159,7 +1381,7 @@ class ApiController extends Controller
         ];
         file_put_contents($this->armedExitCodePath(), json_encode($payload, JSON_UNESCAPED_UNICODE));
         try {
-            \Illuminate\Support\Facades\Cache::put('armed_exit_code', $payload, 300);
+            \Illuminate\Support\Facades\Cache::put($this->armedExitCodeCacheKey(), $payload, 300);
         } catch (\Throwable $e) {
             // ignore cache errors — file vẫn là nguồn chính
         }
@@ -1167,28 +1389,37 @@ class ApiController extends Controller
 
     private function clearArmedExitCodeStorage()
     {
+        $current = null;
+        try {
+            $current = $this->readArmedExitCode();
+        } catch (\Throwable $e) {
+            $current = null;
+        }
+
         $path = $this->armedExitCodePath();
         if (is_file($path)) {
             @unlink($path);
         }
         try {
-            \Illuminate\Support\Facades\Cache::forget('armed_exit_code');
+            \Illuminate\Support\Facades\Cache::forget($this->armedExitCodeCacheKey());
         } catch (\Throwable $e) {
             // ignore
         }
+
+        $this->releaseGlobalArmedCode($current);
     }
 
     private function readArmedExitCode()
     {
         // Ưu tiên cache (nhanh, ít race), fallback file
         try {
-            $cached = \Illuminate\Support\Facades\Cache::get('armed_exit_code');
+            $cached = \Illuminate\Support\Facades\Cache::get($this->armedExitCodeCacheKey());
             if (is_array($cached) && !empty($cached['code'])) {
                 $age = time() - (int) ($cached['ts'] ?? 0);
                 if ($age <= 300) {
                     return strtoupper((string) $cached['code']);
                 }
-                \Illuminate\Support\Facades\Cache::forget('armed_exit_code');
+                \Illuminate\Support\Facades\Cache::forget($this->armedExitCodeCacheKey());
             }
         } catch (\Throwable $e) {
             // fall through to file
@@ -1204,12 +1435,20 @@ class ApiController extends Controller
         }
         $age = time() - (int) ($data['ts'] ?? 0);
         if ($age > 300) {
-            $this->clearArmedExitCodeStorage();
+            // Hết hạn: xóa local + nhả khóa toàn cục nếu mình đang giữ
+            $expiredCode = strtoupper((string) $data['code']);
+            @unlink($path);
+            try {
+                \Illuminate\Support\Facades\Cache::forget($this->armedExitCodeCacheKey());
+            } catch (\Throwable $e) {
+                // ignore
+            }
+            $this->releaseGlobalArmedCode($expiredCode);
             return null;
         }
         // Đồng bộ lại cache nếu file còn hạn
         try {
-            \Illuminate\Support\Facades\Cache::put('armed_exit_code', $data, 300 - $age);
+            \Illuminate\Support\Facades\Cache::put($this->armedExitCodeCacheKey(), $data, 300 - $age);
         } catch (\Throwable $e) {
             // ignore
         }
@@ -1240,9 +1479,32 @@ class ApiController extends Controller
             $this->clearArmedExitCodeStorage();
             return response()->json([
                 'success' => false,
-                'message' => 'Không tìm thấy xe chưa ra với mã: ' . $code . '. Hãy nhập lại.',
+                'message' => 'Mã không tồn tại.',
                 'retryable' => true,
             ], 404);
+        }
+
+        // Đang đối chiếu ở tài khoản khác → giữ báo đỏ conflict (chưa Hợp lệ / Không hợp lệ / F5)
+        if ($log->exit_image && $log->is_valid === null && (string) $log->status === 'in') {
+            $holderId = (int) ($log->guard_out_id ?? 0);
+            if ($holderId && $holderId !== (int) auth()->id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Mã đang được tài khoản khác sử dụng — không nhận mã.',
+                    'conflict' => true,
+                    'retryable' => true,
+                ], 409);
+            }
+        }
+
+        $claim = $this->claimGlobalArmedCode($code, $log->id);
+        if (empty($claim['ok'])) {
+            return response()->json([
+                'success' => false,
+                'message' => $claim['message'] ?? 'Mã đang được tài khoản khác sử dụng — không nhận mã.',
+                'conflict' => true,
+                'retryable' => true,
+            ], 409);
         }
 
         $this->writeArmedExitCode($code, $log->id);
@@ -1297,6 +1559,7 @@ class ApiController extends Controller
                 'session' => $session,
                 'seq' => 0,
                 'updated_at' => time(),
+                'user_id' => $this->currentUserScopeId(),
                 'msgs' => [],
             ];
         } elseif ($type === 'bye') {
@@ -1305,6 +1568,7 @@ class ApiController extends Controller
                     'session' => null,
                     'seq' => 0,
                     'updated_at' => time(),
+                    'user_id' => $this->currentUserScopeId(),
                     'msgs' => [],
                 ];
                 $this->writeWebrtcState($side, $state);
@@ -1322,6 +1586,7 @@ class ApiController extends Controller
         $seq = (int) ($state['seq'] ?? 0) + 1;
         $state['seq'] = $seq;
         $state['updated_at'] = time();
+        $state['user_id'] = $this->currentUserScopeId();
         $state['msgs'][] = [
             'id' => $seq,
             'from' => $from,
@@ -1356,7 +1621,13 @@ class ApiController extends Controller
 
         // State cũ > 3 phút không ai poll → coi như chết
         if ($session && (time() - (int) ($state['updated_at'] ?? 0)) > 180) {
-            $state = ['session' => null, 'seq' => 0, 'updated_at' => time(), 'msgs' => []];
+            $state = [
+                'session' => null,
+                'seq' => 0,
+                'updated_at' => time(),
+                'user_id' => $this->currentUserScopeId(),
+                'msgs' => [],
+            ];
             $this->writeWebrtcState($side, $state);
             $session = null;
         }
@@ -1401,10 +1672,8 @@ class ApiController extends Controller
 
     private function webrtcPath($side)
     {
-        $dir = storage_path('app/webrtc');
-        if (!file_exists($dir)) {
-            @mkdir($dir, 0777, true);
-        }
+        $uid = $this->currentUserScopeId();
+        $dir = $this->ensureDir(storage_path('app/webrtc/' . $uid));
         $side = $side === 'exit' ? 'exit' : 'entry';
         return $dir . DIRECTORY_SEPARATOR . $side . '.json';
     }

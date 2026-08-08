@@ -92,7 +92,35 @@
             }
         });
 
+        function applyCsrfToken(token) {
+            if (!token) return;
+            var meta = document.querySelector('meta[name="csrf-token"]');
+            if (meta) meta.setAttribute('content', token);
+            var input = document.querySelector('#login-form input[name="_token"]');
+            if (input) input.value = token;
+        }
+
+        function refreshCsrfToken() {
+            return fetch(@json(route('csrf.token')), {
+                method: 'GET',
+                credentials: 'same-origin',
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                cache: 'no-store'
+            }).then(function(res) {
+                return res.json();
+            }).then(function(data) {
+                applyCsrfToken(data && data.token);
+                return data && data.token;
+            });
+        }
+
         $(document).ready(function() {
+            // Làm mới CSRF ngay khi mở trang login (ĐT hay giữ tab cũ)
+            refreshCsrfToken().catch(function() {});
+
             try {
                 var clientMsg = sessionStorage.getItem('force_logout_message');
                 if (clientMsg) {
@@ -110,19 +138,29 @@
             }, 4500);
 
             var submitting = false;
-            $('#login-form').on('submit', function() {
+            $('#login-form').on('submit', function(e) {
                 if (submitting) {
+                    e.preventDefault();
                     return false;
                 }
+                e.preventDefault();
                 submitting = true;
+                var form = this;
                 var $btn = $('#login-submit');
                 $btn.prop('disabled', true).text('Đang đăng nhập...');
+
+                refreshCsrfToken()
+                    .catch(function() { return null; })
+                    .then(function() {
+                        HTMLFormElement.prototype.submit.call(form);
+                    });
+
                 // Nếu mạng chậm, vẫn chỉ gửi 1 lần
                 setTimeout(function() {
                     submitting = false;
                     $btn.prop('disabled', false).text('Đăng nhập');
                 }, 8000);
-                return true;
+                return false;
             });
 
             $("#show_hide_password a").on('click', function(event) {

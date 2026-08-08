@@ -54,7 +54,7 @@
                         </a>
                         <hr class="dropdown-divider">
                         <a class="dropdown-item d-flex align-items-center gap-2 py-2" href="javascript:;"
-                            onclick="event.preventDefault(); document.getElementById('logout-form').submit();">
+                            onclick="event.preventDefault(); window.ndbsLogout && window.ndbsLogout();">
                             <i class="material-icons-outlined">power_settings_new</i> Đăng xuất
                         </a>
                         <form id="logout-form" action="{{ route('logout') }}" method="POST" class="d-none">
@@ -153,6 +153,49 @@
     <script>
         (function() {
             var kicking = false;
+            var loginUrl = @json(route('login'));
+            var csrfUrl = @json(route('csrf.token'));
+
+            function applyCsrfToken(token) {
+                if (!token) return;
+                var meta = document.querySelector('meta[name="csrf-token"]');
+                if (meta) meta.setAttribute('content', token);
+                var input = document.querySelector('#logout-form input[name="_token"]');
+                if (input) input.value = token;
+                if (window.jQuery) {
+                    $.ajaxSetup({ headers: { 'X-CSRF-TOKEN': token } });
+                }
+            }
+
+            function refreshCsrfToken() {
+                return fetch(csrfUrl, {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    cache: 'no-store'
+                }).then(function(res) {
+                    return res.json();
+                }).then(function(data) {
+                    applyCsrfToken(data && data.token);
+                    return data && data.token;
+                });
+            }
+
+            window.ndbsLogout = function() {
+                var form = document.getElementById('logout-form');
+                if (!form) {
+                    window.location.href = loginUrl;
+                    return;
+                }
+                refreshCsrfToken()
+                    .catch(function() { return null; })
+                    .then(function() {
+                        form.submit();
+                    });
+            };
 
             function showForceLogoutOverlay(message) {
                 if (kicking) return;
@@ -176,8 +219,12 @@
                     '</div>';
                 document.body.appendChild(overlay);
 
+                try {
+                    sessionStorage.setItem('force_logout_message', msg);
+                } catch (e) {}
+
                 setTimeout(function() {
-                    window.location.href = @json(route('login'));
+                    window.location.href = loginUrl;
                 }, 3000);
             }
 
@@ -191,7 +238,12 @@
 
             if (window.jQuery) {
                 $(document).ajaxError(function(event, jqxhr) {
-                    if (!jqxhr || jqxhr.status !== 403) return;
+                    if (!jqxhr) return;
+                    if (jqxhr.status === 419) {
+                        showForceLogoutOverlay('Phiên đã hết hạn. Vui lòng đăng nhập lại.');
+                        return;
+                    }
+                    if (jqxhr.status !== 403) return;
                     try {
                         handleForceLogoutPayload(JSON.parse(jqxhr.responseText || '{}'));
                     } catch (e) {}
@@ -202,7 +254,9 @@
             if (typeof originalFetch === 'function') {
                 window.fetch = function() {
                     return originalFetch.apply(this, arguments).then(function(response) {
-                        if (response && response.status === 403) {
+                        if (response && response.status === 419) {
+                            showForceLogoutOverlay('Phiên đã hết hạn. Vui lòng đăng nhập lại.');
+                        } else if (response && response.status === 403) {
                             response.clone().json().then(function(data) {
                                 handleForceLogoutPayload(data);
                             }).catch(function() {});
@@ -223,6 +277,11 @@
                     credentials: 'same-origin',
                     cache: 'no-store'
                 }).then(function(response) {
+                    if (!response) return;
+                    if (response.status === 419) {
+                        showForceLogoutOverlay('Phiên đã hết hạn. Vui lòng đăng nhập lại.');
+                        return;
+                    }
                     if (response.status === 403) {
                         return response.json().then(function(data) {
                             handleForceLogoutPayload(data);

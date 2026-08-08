@@ -482,9 +482,32 @@ $(document).ready(function() {
 
     let lastArmedCode = '';
     let lastArmFailedCode = '';
+    let lastArmConflictCode = '';
+    let armInFlight = false;
+    let conflictRetryTimer = null;
+
+    function stopConflictRetry() {
+        if (conflictRetryTimer) {
+            clearTimeout(conflictRetryTimer);
+            conflictRetryTimer = null;
+        }
+    }
+
+    function scheduleConflictRetry() {
+        stopConflictRetry();
+        conflictRetryTimer = setTimeout(function() {
+            conflictRetryTimer = null;
+            const code = ($('#exit-code').val() || '').trim().toUpperCase();
+            if (code.length === 6 && lastArmConflictCode === code && !exitLockedByPending) {
+                armExitCodeIfReady(true);
+            }
+        }, 600);
+    }
 
     function markArmFailed(msg) {
+        stopConflictRetry();
         lastArmedCode = '';
+        lastArmConflictCode = '';
         lastArmFailedCode = ($('#exit-code').val() || '').trim().toUpperCase();
         $.post(API.clearExit);
         $('#exit-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
@@ -496,34 +519,71 @@ $(document).ready(function() {
         }
     }
 
-    function armExitCodeIfReady() {
+    function markArmConflict(msg) {
+        lastArmedCode = '';
+        lastArmFailedCode = '';
+        lastArmConflictCode = ($('#exit-code').val() || '').trim().toUpperCase();
+        $('#exit-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
+            .text(msg || 'Mã đang được tài khoản khác sử dụng — không nhận mã.');
+        scheduleConflictRetry();
+    }
+
+    function armExitCodeIfReady(forceRetry) {
         const code = ($('#exit-code').val() || '').trim().toUpperCase();
         if (code.length !== 6) {
-            if (lastArmedCode || lastArmFailedCode) {
-                $.post(API.clearExit);
+            // Xóa/sửa còn dưới 6 ký tự → luôn tắt kích hoạt + reset hint (kể cả poll đang treo chữ xanh)
+            const hadArmUi = !!(lastArmedCode || lastArmFailedCode || lastArmConflictCode
+                || $('#exit-code-arm-hint').hasClass('text-success')
+                || $('#exit-code-arm-hint').hasClass('text-danger'));
+            if (hadArmUi || code.length === 0) {
+                stopConflictRetry();
+                if (lastArmedCode || hadArmUi) {
+                    $.post(API.clearExit);
+                }
                 lastArmedCode = '';
                 lastArmFailedCode = '';
+                lastArmConflictCode = '';
                 $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
                     .text('Nhập mã 6 ký tự để ĐT bắt đầu quét');
             }
             return;
         }
-        // Đã kích hoạt OK, hoặc vừa fail cùng mã (tránh spam) — chỉ thử lại khi user sửa/xóa rồi nhập lại
-        if (code === lastArmedCode || code === lastArmFailedCode) return;
+        // Đã kích hoạt OK, hoặc fail cứng cùng mã — chỉ thử lại khi user sửa/xóa rồi nhập lại
+        // Conflict: cho forceRetry để khi bên kia xóa mã / quét xong thì cập nhật ngay
+        if (!forceRetry && (code === lastArmedCode || code === lastArmFailedCode || code === lastArmConflictCode)) {
+            return;
+        }
+        if (armInFlight) return;
+        armInFlight = true;
         $.post(API.armExit, { code: code })
             .done(function(res) {
                 if (res && res.success) {
+                    stopConflictRetry();
                     lastArmedCode = code;
                     lastArmFailedCode = '';
+                    lastArmConflictCode = '';
                     $('#exit-code-arm-hint').removeClass('text-muted text-danger').addClass('text-success')
                         .text('Đã kích hoạt — mã ' + code + (res.plate_number ? (' (' + res.plate_number + ')') : ''));
+                } else if (res && res.conflict) {
+                    markArmConflict((res && res.message) || 'Mã đang được tài khoản khác sử dụng — không nhận mã.');
                 } else {
                     markArmFailed((res && res.message) || 'Không kích hoạt được mã này');
                 }
             })
             .fail(function(xhr) {
-                const msg = (xhr.responseJSON && xhr.responseJSON.message) || 'Mã không hợp lệ';
-                markArmFailed(msg);
+                const body = (xhr && xhr.responseJSON) || {};
+                if (body.conflict || xhr.status === 409) {
+                    markArmConflict(body.message || 'Mã đang được tài khoản khác sử dụng — không nhận mã.');
+                    return;
+                }
+                if (xhr.status === 404) {
+                    markArmFailed(body.message || 'Mã không tồn tại.');
+                    return;
+                }
+                markArmFailed(body.message || 'Mã không hợp lệ');
+            })
+            .always(function() {
+                armInFlight = false;
             });
     }
 
@@ -665,6 +725,8 @@ $(document).ready(function() {
         lastSeenPendingId = null;
         lastArmedCode = '';
         lastArmFailedCode = '';
+        lastArmConflictCode = '';
+        if (typeof stopConflictRetry === 'function') stopConflictRetry();
         $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
             .text(opts.keepCode ? 'Nhập đủ 6 ký tự hoặc sửa mã rồi thử lại' : 'Nhập mã 6 ký tự để ĐT bắt đầu quét');
         if (opts.focusCode) {
@@ -905,6 +967,7 @@ $(document).ready(function() {
                             .text('Đang chờ nhận diện xe ra...');
                         lastArmedCode = '';
                         lastArmFailedCode = '';
+                        lastArmConflictCode = '';
                         $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
                             .text('Nhập mã 6 ký tự để ĐT bắt đầu quét');
 
@@ -957,17 +1020,37 @@ $(document).ready(function() {
                 }
 
                 // Nếu mã còn trên ô nhập mà server mất kích hoạt (lỗi/hết hạn) → kích hoạt lại để ĐT quét tiếp
-                // Không tự kích hoạt lại mã vừa fail (user phải sửa/xóa rồi nhập lại)
+                // Conflict: poll lại liên tục — bên kia xóa mã → xanh; đã quét xong → "Mã không tồn tại"
                 const codeNow = ($('#exit-code').val() || '').trim().toUpperCase();
                 if (codeNow.length === 6 && !res.armed_exit_code && !pending && !exitLockedByPending
                     && codeNow !== lastArmFailedCode) {
+                    const wasConflict = (lastArmConflictCode === codeNow);
                     if (lastArmedCode === codeNow) lastArmedCode = '';
-                    armExitCodeIfReady();
-                } else if (res.armed_exit_code) {
+                    armExitCodeIfReady(wasConflict);
+                } else if (res.armed_exit_code && codeNow === String(res.armed_exit_code).toUpperCase()) {
+                    // Chỉ hiện xanh khi ô nhập vẫn đúng mã đang kích hoạt
                     lastArmedCode = String(res.armed_exit_code).toUpperCase();
                     lastArmFailedCode = '';
+                    lastArmConflictCode = '';
+                    stopConflictRetry();
                     $('#exit-code-arm-hint').removeClass('text-muted text-danger').addClass('text-success')
                         .text('Đã kích hoạt — mã ' + lastArmedCode);
+                } else if (!codeNow) {
+                    // User đã xóa mã trên ô nhập — tắt kích hoạt + về hint mặc định (không để poll kéo lại chữ xanh)
+                    if (lastArmedCode || lastArmConflictCode || lastArmFailedCode
+                        || res.armed_exit_code
+                        || $('#exit-code-arm-hint').hasClass('text-success')
+                        || $('#exit-code-arm-hint').hasClass('text-danger')) {
+                        stopConflictRetry();
+                        if (lastArmedCode || res.armed_exit_code) {
+                            $.post(API.clearExit);
+                        }
+                        lastArmedCode = '';
+                        lastArmFailedCode = '';
+                        lastArmConflictCode = '';
+                        $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
+                            .text('Nhập mã 6 ký tự để ĐT bắt đầu quét');
+                    }
                 }
             })
             .always(function() {
