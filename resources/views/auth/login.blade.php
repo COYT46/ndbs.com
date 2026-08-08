@@ -122,9 +122,13 @@
             refreshCsrfToken().catch(function() {});
 
             try {
+                var alreadyShown = sessionStorage.getItem('force_logout_shown');
                 var clientMsg = sessionStorage.getItem('force_logout_message');
-                if (clientMsg) {
-                    sessionStorage.removeItem('force_logout_message');
+                sessionStorage.removeItem('force_logout_shown');
+                sessionStorage.removeItem('force_logout_message');
+
+                // Overlay đã hiện rồi → không báo lại. Đã có flash server → cũng không chồng thêm.
+                if (clientMsg && !alreadyShown && !$('.auto-dismiss-logout-alert').length) {
                     var $box = $('#force-logout-client-alert');
                     $box.find('.force-logout-text').text(clientMsg);
                     $box.removeClass('d-none');

@@ -45,7 +45,7 @@ class Handler extends ExceptionHandler
 
                 return redirect()
                     ->route('login')
-                    ->with('force_logout_message', 'Phiên cũ đã hết hạn. Vui lòng đăng nhập lại.');
+                    ->with('force_logout_message', 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
             }
 
             // Đăng nhập: lần 2 double-submit sau khi lần 1 đã OK
@@ -64,23 +64,27 @@ class Handler extends ExceptionHandler
                     ->withErrors(['email' => 'Phiên đăng nhập đã hết hạn. Vui lòng thử lại.']);
             }
 
+            // CSRF cũ khi vẫn còn phiên: không force_logout — frontend chỉ làm mới token
             if ($request->expectsJson() || $request->ajax() || $request->is('api/*') || $request->is('guard/webrtc/*')) {
+                $loggedIn = Auth::check();
+
                 return response()->json([
-                    'message' => 'Phiên đã hết hạn. Vui lòng tải lại trang hoặc đăng nhập lại.',
-                    'force_logout' => !Auth::check(),
+                    'message' => $loggedIn
+                        ? 'Phiên CSRF đã cũ. Vui lòng thử lại.'
+                        : 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
+                    'force_logout' => !$loggedIn,
                 ], 419);
             }
 
             if (Auth::check()) {
                 return redirect()
                     ->back()
-                    ->withInput($request->except($this->dontFlash))
-                    ->with('force_logout_message', 'Phiên đã hết hạn. Vui lòng thử lại.');
+                    ->withInput($request->except($this->dontFlash));
             }
 
             return redirect()
                 ->route('login')
-                ->withErrors(['email' => 'Phiên đã hết hạn. Vui lòng đăng nhập lại.']);
+                ->withErrors(['email' => 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.']);
         });
     }
 }

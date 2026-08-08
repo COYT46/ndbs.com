@@ -153,8 +153,13 @@
     <script>
         (function() {
             var kicking = false;
+            var refreshingCsrf = false;
+            var authFailStreak = 0;
             var loginUrl = @json(route('login'));
             var csrfUrl = @json(route('csrf.token'));
+            var statusUrl = @json(route('account.status'));
+            var defaultLogoutMsg = 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.';
+            var originalFetch = window.fetch;
 
             function applyCsrfToken(token) {
                 if (!token) return;
@@ -168,7 +173,8 @@
             }
 
             function refreshCsrfToken() {
-                return fetch(csrfUrl, {
+                var fetchFn = typeof originalFetch === 'function' ? originalFetch : window.fetch;
+                return fetchFn.call(window, csrfUrl, {
                     method: 'GET',
                     credentials: 'same-origin',
                     headers: {
@@ -201,7 +207,7 @@
                 if (kicking) return;
                 kicking = true;
 
-                var msg = message || 'Phiên đăng nhập đã kết thúc.';
+                var msg = message || defaultLogoutMsg;
 
                 var existing = document.getElementById('force-logout-overlay');
                 if (existing) existing.remove();
@@ -213,50 +219,73 @@
                 overlay.innerHTML =
                     '<div style="max-width:420px;width:100%;background:#fff;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.25);padding:24px 20px;text-align:center;">' +
                         '<div class="text-danger mb-2"><i class="material-icons-outlined" style="font-size:48px;">gpp_bad</i></div>' +
-                        '<div style="font-weight:700;font-size:1.05rem;margin-bottom:8px;">Thông báo tài khoản</div>' +
+                        '<div style="font-weight:700;font-size:1.05rem;margin-bottom:8px;">Thông báo</div>' +
                         '<div style="color:#475569;margin-bottom:12px;">' + msg + '</div>' +
                         '<div style="color:#94a3b8;font-size:.9rem;">Đang chuyển về trang đăng nhập...</div>' +
                     '</div>';
                 document.body.appendChild(overlay);
 
+                // Đánh dấu đã hiện overlay → trang login không hiện lại cùng nội dung
                 try {
-                    sessionStorage.setItem('force_logout_message', msg);
+                    sessionStorage.setItem('force_logout_shown', '1');
+                    sessionStorage.removeItem('force_logout_message');
                 } catch (e) {}
 
                 setTimeout(function() {
                     window.location.href = loginUrl;
-                }, 3000);
+                }, 1600);
             }
 
             function handleForceLogoutPayload(data) {
                 if (data && data.force_logout) {
-                    showForceLogoutOverlay(data.message);
+                    showForceLogoutOverlay(data.message || defaultLogoutMsg);
                     return true;
                 }
                 return false;
             }
 
+            // 419 = CSRF cũ: chỉ làm mới token, không đá phiên (tránh spam overlay)
+            function handleCsrfMismatch(rawBody) {
+                if (kicking) return;
+                var data = null;
+                if (rawBody && typeof rawBody === 'object') {
+                    data = rawBody;
+                } else if (typeof rawBody === 'string' && rawBody) {
+                    try { data = JSON.parse(rawBody); } catch (e) {}
+                }
+                if (handleForceLogoutPayload(data)) return;
+                if (refreshingCsrf) return;
+                refreshingCsrf = true;
+                refreshCsrfToken()
+                    .catch(function() {})
+                    .finally(function() { refreshingCsrf = false; });
+            }
+
             if (window.jQuery) {
                 $(document).ajaxError(function(event, jqxhr) {
-                    if (!jqxhr) return;
+                    if (!jqxhr || kicking) return;
                     if (jqxhr.status === 419) {
-                        showForceLogoutOverlay('Phiên đã hết hạn. Vui lòng đăng nhập lại.');
+                        handleCsrfMismatch(jqxhr.responseJSON || jqxhr.responseText);
                         return;
                     }
                     if (jqxhr.status !== 403) return;
                     try {
-                        handleForceLogoutPayload(JSON.parse(jqxhr.responseText || '{}'));
+                        handleForceLogoutPayload(jqxhr.responseJSON || JSON.parse(jqxhr.responseText || '{}'));
                     } catch (e) {}
                 });
             }
 
-            var originalFetch = window.fetch;
             if (typeof originalFetch === 'function') {
                 window.fetch = function() {
                     return originalFetch.apply(this, arguments).then(function(response) {
-                        if (response && response.status === 419) {
-                            showForceLogoutOverlay('Phiên đã hết hạn. Vui lòng đăng nhập lại.');
-                        } else if (response && response.status === 403) {
+                        if (!response || kicking) return response;
+                        if (response.status === 419) {
+                            response.clone().json().then(function(data) {
+                                handleCsrfMismatch(data);
+                            }).catch(function() {
+                                handleCsrfMismatch(null);
+                            });
+                        } else if (response.status === 403) {
                             response.clone().json().then(function(data) {
                                 handleForceLogoutPayload(data);
                             }).catch(function() {});
@@ -267,8 +296,8 @@
             }
 
             setInterval(function() {
-                if (kicking) return;
-                originalFetch(@json(route('account.status')), {
+                if (kicking || typeof originalFetch !== 'function') return;
+                originalFetch.call(window, statusUrl, {
                     method: 'GET',
                     headers: {
                         'Accept': 'application/json',
@@ -277,15 +306,27 @@
                     credentials: 'same-origin',
                     cache: 'no-store'
                 }).then(function(response) {
-                    if (!response) return;
-                    if (response.status === 419) {
-                        showForceLogoutOverlay('Phiên đã hết hạn. Vui lòng đăng nhập lại.');
+                    if (!response || kicking) return;
+                    if (response.ok) {
+                        authFailStreak = 0;
                         return;
                     }
+                    if (response.status === 401) {
+                        authFailStreak += 1;
+                        // 2 lần liên tiếp (~10s) mới báo — tránh nháy mạng
+                        if (authFailStreak >= 2) {
+                            showForceLogoutOverlay(defaultLogoutMsg);
+                        }
+                        return;
+                    }
+                    authFailStreak = 0;
                     if (response.status === 403) {
                         return response.json().then(function(data) {
                             handleForceLogoutPayload(data);
                         });
+                    }
+                    if (response.status === 419) {
+                        handleCsrfMismatch(null);
                     }
                 }).catch(function() {});
             }, 5000);
