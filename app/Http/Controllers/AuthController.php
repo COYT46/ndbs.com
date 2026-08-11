@@ -91,6 +91,28 @@ class AuthController extends Controller
             // ignore
         }
 
+        // Nhả khóa LIVE camera (entry/exit) của tài khoản
+        try {
+            if ($uid > 0) {
+                $webrtcDir = storage_path('app' . DIRECTORY_SEPARATOR . 'webrtc' . DIRECTORY_SEPARATOR . $uid);
+                foreach (['entry.json', 'exit.json'] as $file) {
+                    $path = $webrtcDir . DIRECTORY_SEPARATOR . $file;
+                    if (is_file($path)) {
+                        @file_put_contents($path, json_encode([
+                            'session' => null,
+                            'device_id' => null,
+                            'seq' => 0,
+                            'updated_at' => time(),
+                            'user_id' => $uid,
+                            'msgs' => [],
+                        ], JSON_UNESCAPED_SLASHES));
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // ignore
+        }
+
         // Hủy đối chiếu xe ra chưa xác nhận do chính tài khoản này quét ra
         try {
             \App\Models\VehicleLog::where('status', 'in')

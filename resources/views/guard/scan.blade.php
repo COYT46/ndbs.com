@@ -82,6 +82,11 @@ $(document).ready(function() {
     let livePushing = false;
     let liveNeedsPush = false;
     let liveStarted = false;
+    let liveBlocked = false;
+    let liveClaimed = false;
+    let liveWaitTimer = null;
+    let liveWaiting = false;
+    let cameraStarting = false;
     let rtcPc = null;
     let rtcSession = null;
     let rtcAfter = 0;
@@ -89,11 +94,26 @@ $(document).ready(function() {
     let armedCode = null;
     let cooldownUntil = 0;
     let scanAttempt = 0;
+    const CLAIM_RETRY_MS = 1000;
     const canvas = document.createElement('canvas');
     const liveCanvas = document.createElement('canvas');
     const liveCtx = liveCanvas.getContext('2d', { alpha: false });
     const video = document.getElementById('scan-video');
     const csrfToken = $('meta[name="csrf-token"]').attr('content');
+
+    function getLiveDeviceId() {
+        const key = 'ndbs_live_device_id';
+        try {
+            let id = localStorage.getItem(key);
+            if (id && /^[a-zA-Z0-9_-]{8,64}$/.test(id)) return id;
+            id = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+            localStorage.setItem(key, id);
+            return id;
+        } catch (e) {
+            return 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+        }
+    }
+    const DEVICE_ID = getLiveDeviceId();
 
     function setStatus(text) {
         $('#scan-status').text(text);
@@ -102,9 +122,119 @@ $(document).ready(function() {
     function showResult(ok, html) {
         const box = $('#scan-result');
         box.removeClass('alert-success alert-danger alert-warning')
-            .addClass(ok ? 'alert-success' : 'alert-danger')
+            .addClass(ok === true ? 'alert-success' : (ok === 'warn' ? 'alert-warning' : 'alert-danger'))
             .html(html)
             .show();
+    }
+
+    function clearLiveWait() {
+        if (liveWaitTimer) {
+            clearTimeout(liveWaitTimer);
+            liveWaitTimer = null;
+        }
+        liveWaiting = false;
+    }
+
+    function enterLiveWaitQueue(message) {
+        const wasClaimed = liveClaimed;
+        liveBlocked = true;
+        liveClaimed = false;
+        liveWaiting = true;
+        const msg = message || 'Đang có thiết bị khác kết nối camera này';
+        setStatus(msg + ' — đang chờ nhả quyền...');
+        showResult('warn',
+            '<i class="material-icons-outlined align-middle me-1" style="font-size:18px;">hourglass_top</i> '
+            + msg + '<br><small>Sẽ tự kết nối khi thiết bị kia rời trang hoặc đăng xuất.</small>'
+        );
+        // Không nhả khóa của thiết bị đang giữ
+        stopCameraFully(wasClaimed);
+        scheduleLiveClaimRetry(CLAIM_RETRY_MS);
+    }
+
+    function scheduleLiveClaimRetry(delay) {
+        if (liveWaitTimer) clearTimeout(liveWaitTimer);
+        if (!liveWaiting) return;
+        liveWaitTimer = setTimeout(retryLiveClaimFromQueue, typeof delay === 'number' ? delay : CLAIM_RETRY_MS);
+    }
+
+    function retryLiveClaimFromQueue() {
+        if (!liveWaiting) return;
+        setStatus('Đang chờ thiết bị khác nhả camera...');
+        rtcPost('claim', null).then(function(res) {
+            if (!liveWaiting) return;
+            if (res && res.conflict) {
+                scheduleLiveClaimRetry(CLAIM_RETRY_MS);
+                return;
+            }
+            if (!res || res.success === false) {
+                scheduleLiveClaimRetry(CLAIM_RETRY_MS);
+                return;
+            }
+            // Được quyền → tự mở camera, không cần F5
+            clearLiveWait();
+            liveBlocked = false;
+            liveClaimed = true;
+            $('#scan-result').fadeOut();
+            setStatus('Đã nhận quyền LIVE — đang mở camera...');
+            openCameraAfterClaim();
+        }).catch(function() {
+            if (liveWaiting) scheduleLiveClaimRetry(CLAIM_RETRY_MS);
+        });
+    }
+
+    function stopCameraFully(releaseLock) {
+        if (armedPollTimer) {
+            clearTimeout(armedPollTimer);
+            armedPollTimer = null;
+        }
+        if (liveTimer) {
+            clearTimeout(liveTimer);
+            liveTimer = null;
+        }
+        if (scanTimer) {
+            clearTimeout(scanTimer);
+            scanTimer = null;
+        }
+        stopRtcPublisher(!!releaseLock);
+        if (stream) {
+            stream.getTracks().forEach(function(t) { t.stop(); });
+            stream = null;
+        }
+        if (video) video.srcObject = null;
+        scanning = false;
+        busy = false;
+        cameraStarting = false;
+    }
+
+    /** Nhả khóa ngay khi thoát trang / đổi menu (fetch keepalive — không cần F5 bên kia) */
+    function releaseLiveSlotKeepalive() {
+        clearLiveWait();
+        if (!liveClaimed && !rtcSession) return;
+        const session = rtcSession || ('claim_' + DEVICE_ID);
+        liveClaimed = false;
+        rtcSession = null;
+        try {
+            const token = ($('meta[name="csrf-token"]').attr('content') || csrfToken || '');
+            fetch(API.webrtcSignal, {
+                method: 'POST',
+                credentials: 'same-origin',
+                keepalive: true,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': token,
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify({
+                    side: SIDE,
+                    from: 'phone',
+                    type: 'bye',
+                    session: session,
+                    device_id: DEVICE_ID,
+                    payload: ''
+                })
+            });
+        } catch (e) {}
     }
 
     function captureFrame(maxW, quality, targetCanvas) {
@@ -151,7 +281,7 @@ $(document).ready(function() {
             clearTimeout(liveTimer);
             liveTimer = null;
         }
-        if (!stream) return;
+        if (!stream || liveBlocked) return;
 
         // Đang OCR / RTC còn sống → không spam JPEG (tránh nghẽn Wi‑Fi làm rớt LIVE RTC)
         const rtcAlive = !!(rtcPc && rtcPc.connectionState !== 'failed' && rtcPc.connectionState !== 'closed');
@@ -171,18 +301,27 @@ $(document).ready(function() {
 
         captureFrame(LIVE_MAX_W, LIVE_QUALITY, liveCanvas)
             .then(function(blob) {
-                if (!blob || !stream) return null;
-                return fetch(API.livePreview + '?side=' + encodeURIComponent(SIDE), {
+                if (!blob || !stream || liveBlocked) return null;
+                return fetch(API.livePreview
+                    + '?side=' + encodeURIComponent(SIDE)
+                    + '&device_id=' + encodeURIComponent(DEVICE_ID), {
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: {
                         'Content-Type': 'image/jpeg',
                         'Accept': 'application/json',
                         'X-CSRF-TOKEN': csrfToken,
-                        'X-Requested-With': 'XMLHttpRequest'
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-Live-Device-Id': DEVICE_ID
                     },
                     body: blob
                 }).then(function(r) {
+                    if (r.status === 409) {
+                        return r.json().catch(function() { return null; }).then(function(body) {
+                            enterLiveWaitQueue((body && body.message) || null);
+                            return null;
+                        });
+                    }
                     if (!r.ok) throw new Error('HTTP ' + r.status);
                     return r.json().catch(function() { return null; });
                 });
@@ -192,7 +331,7 @@ $(document).ready(function() {
             })
             .finally(function() {
                 livePushing = false;
-                if (!stream) return;
+                if (!stream || liveBlocked) return;
                 if (liveNeedsPush && !rtcConnected && !rtcAlive) {
                     pushLiveFrame();
                     return;
@@ -209,8 +348,9 @@ $(document).ready(function() {
         return JSON.parse(decodeURIComponent(escape(atob(payload))));
     }
 
-    function rtcPost(type, payloadObj) {
-        if (!rtcSession) return Promise.resolve(null);
+    function rtcPost(type, payloadObj, forceSession) {
+        if (!rtcSession && type !== 'claim' && !forceSession) return Promise.resolve(null);
+        const session = rtcSession || forceSession || ('claim_' + DEVICE_ID);
         return fetch(API.webrtcSignal, {
             method: 'POST',
             credentials: 'same-origin',
@@ -224,26 +364,57 @@ $(document).ready(function() {
                 side: SIDE,
                 from: 'phone',
                 type: type,
-                session: rtcSession,
+                session: session,
+                device_id: DEVICE_ID,
                 payload: payloadObj ? rtcEncode(payloadObj) : ''
             })
         }).then(function(r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json().catch(function() { return null; });
+            return r.json().catch(function() { return null; }).then(function(body) {
+                if (r.status === 409 || (body && body.conflict)) {
+                    return {
+                        success: false,
+                        conflict: true,
+                        message: (body && body.message) || 'Đang có thiết bị khác kết nối camera này'
+                    };
+                }
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return body;
+            });
         }).catch(function(err) {
             console.warn('webrtc post', err);
             return null;
         });
     }
 
-    function stopRtcPublisher() {
+    function claimLiveSlot() {
+        return rtcPost('claim', null).then(function(res) {
+            if (res && res.conflict) {
+                enterLiveWaitQueue(res.message);
+                return false;
+            }
+            if (!res || res.success === false) {
+                enterLiveWaitQueue('Không xác nhận được quyền LIVE — đang thử lại...');
+                return false;
+            }
+            liveClaimed = true;
+            liveBlocked = false;
+            clearLiveWait();
+            return true;
+        });
+    }
+
+    function stopRtcPublisher(releaseLock) {
         if (rtcPollTimer) {
             clearTimeout(rtcPollTimer);
             rtcPollTimer = null;
         }
         const oldSession = rtcSession;
         if (oldSession) {
-            rtcPost('bye', null);
+            rtcPost('bye', null, oldSession);
+            liveClaimed = false;
+        } else if (releaseLock && liveClaimed) {
+            rtcPost('bye', null, 'claim_' + DEVICE_ID);
+            liveClaimed = false;
         }
         if (rtcPc) {
             try { rtcPc.close(); } catch (e) {}
@@ -255,7 +426,7 @@ $(document).ready(function() {
     }
 
     async function startRtcPublisher() {
-        if (!stream || !window.RTCPeerConnection) return;
+        if (!stream || !window.RTCPeerConnection || liveBlocked) return;
         stopRtcPublisher();
 
         rtcSession = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -305,7 +476,11 @@ $(document).ready(function() {
         try {
             const offer = await pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false });
             await pc.setLocalDescription(offer);
-            await rtcPost('offer', { type: offer.type, sdp: offer.sdp });
+            const offerRes = await rtcPost('offer', { type: offer.type, sdp: offer.sdp });
+            if (offerRes && offerRes.conflict) {
+                enterLiveWaitQueue(offerRes.message);
+                return;
+            }
             pollRtcPhone();
         } catch (e) {
             console.warn('webrtc offer fail', e);
@@ -672,6 +847,43 @@ $(document).ready(function() {
         });
     }
 
+    async function openCameraAfterClaim() {
+        if (cameraStarting || liveBlocked || liveWaiting) return;
+        cameraStarting = true;
+        try {
+            setStatus('Đang mở camera...');
+            stream = await openCameraStream();
+            video.setAttribute('playsinline', 'true');
+            video.setAttribute('muted', 'true');
+            video.muted = true;
+            video.srcObject = stream;
+            await video.play().catch(function() {});
+            const ready = await waitForVideoReady(8000);
+            if (liveBlocked || liveWaiting) {
+                stopCameraFully(true);
+                return;
+            }
+            if (!ready) {
+                setStatus('Camera mở nhưng chưa sẵn sàng — thử tải lại trang');
+            } else {
+                setStatus(IS_EXIT ? 'LIVE → màn giám sát | Chờ quẹt mã...' : 'LIVE → màn giám sát | Đang chờ biển số...');
+            }
+            pushLiveFrame();
+            startRtcPublisher();
+            if (IS_EXIT) {
+                pollArmedCode();
+            } else {
+                scheduleScan();
+            }
+        } catch (e) {
+            console.error(e);
+            setStatus('Không mở được camera — cấp quyền camera + dùng HTTPS');
+            stopCameraFully(true);
+        } finally {
+            cameraStarting = false;
+        }
+    }
+
     async function startCamera() {
         if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
             location.href = 'https://' + location.host + location.pathname + location.search;
@@ -682,41 +894,57 @@ $(document).ready(function() {
             return;
         }
         try {
-            setStatus('Đang mở camera...');
-            stream = await openCameraStream();
-            video.setAttribute('playsinline', 'true');
-            video.setAttribute('muted', 'true');
-            video.muted = true;
-            video.srcObject = stream;
-            await video.play().catch(function() {});
-            const ready = await waitForVideoReady(8000);
-            if (!ready) {
-                setStatus('Camera mở nhưng chưa sẵn sàng — thử tải lại trang');
-            } else {
-                setStatus(IS_EXIT ? 'LIVE → màn giám sát | Chờ quẹt mã...' : 'LIVE → màn giám sát | Đang chờ biển số...');
-            }
-            // Luôn đẩy LIVE ngay khi mở camera → hiện trên màn giám sát (ô vào hoặc ô ra)
-            pushLiveFrame();
-            // WebRTC: stream video thẳng tới PC (mượt, ít delay)
-            startRtcPublisher();
-            if (IS_EXIT) {
-                pollArmedCode();
-            } else {
-                scheduleScan();
-            }
+            setStatus('Đang kiểm tra kết nối LIVE...');
+            const claimed = await claimLiveSlot();
+            if (!claimed) return;
+            await openCameraAfterClaim();
         } catch (e) {
             console.error(e);
             setStatus('Không mở được camera — cấp quyền camera + dùng HTTPS');
         }
     }
 
-    $(window).on('beforeunload', function() {
-        if (armedPollTimer) clearTimeout(armedPollTimer);
-        if (liveTimer) clearTimeout(liveTimer);
-        if (scanTimer) clearTimeout(scanTimer);
-        stopRtcPublisher();
-        if (stream) stream.getTracks().forEach(function(t) { t.stop(); });
-    });
+    function onLeaveScanPage() {
+        releaseLiveSlotKeepalive();
+        // Dọn local; khóa đã gửi bye keepalive ở trên
+        if (armedPollTimer) {
+            clearTimeout(armedPollTimer);
+            armedPollTimer = null;
+        }
+        if (liveTimer) {
+            clearTimeout(liveTimer);
+            liveTimer = null;
+        }
+        if (scanTimer) {
+            clearTimeout(scanTimer);
+            scanTimer = null;
+        }
+        if (rtcPollTimer) {
+            clearTimeout(rtcPollTimer);
+            rtcPollTimer = null;
+        }
+        if (rtcPc) {
+            try { rtcPc.close(); } catch (e) {}
+            rtcPc = null;
+        }
+        if (stream) {
+            stream.getTracks().forEach(function(t) { t.stop(); });
+            stream = null;
+        }
+    }
+
+    // pagehide tin cậy hơn beforeunload trên mobile / khi bấm menu
+    window.addEventListener('pagehide', onLeaveScanPage);
+    window.addEventListener('beforeunload', onLeaveScanPage);
+
+    // Đăng xuất: nhả LIVE trước khi submit form
+    const prevLogout = window.ndbsLogout;
+    window.ndbsLogout = function() {
+        releaseLiveSlotKeepalive();
+        if (typeof prevLogout === 'function') return prevLogout.apply(this, arguments);
+        const form = document.getElementById('logout-form');
+        if (form) form.submit();
+    };
 
     startCamera();
 });

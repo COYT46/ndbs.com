@@ -1012,6 +1012,9 @@ class ApiController extends Controller
     public function uploadLivePreview(Request $request)
     {
         $side = $request->input('side', $request->query('side', 'entry')) === 'exit' ? 'exit' : 'entry';
+        $deviceId = $this->normalizeLiveDeviceId(
+            $request->input('device_id', $request->query('device_id', $request->header('X-Live-Device-Id', '')))
+        );
 
         $bin = null;
         if ($request->hasFile('image')) {
@@ -1036,6 +1039,18 @@ class ApiController extends Controller
         }
 
         $this->releaseSessionLock();
+
+        if ($deviceId !== '') {
+            $claim = $this->assertLivePublisherAllowed($side, $deviceId);
+            if (!$claim['ok']) {
+                return response()->json([
+                    'success' => false,
+                    'conflict' => true,
+                    'message' => $claim['message'],
+                ], 409);
+            }
+            $this->touchLivePublisher($side, $deviceId, $claim['state'] ?? null);
+        }
 
         $uid = $this->currentUserScopeId();
         $dir = $this->ensureDir(public_path('uploads/live/' . $uid));
@@ -1556,14 +1571,15 @@ class ApiController extends Controller
         $type = (string) $request->input('type', '');
         $session = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $request->input('session', ''));
         $payload = (string) $request->input('payload', '');
+        $deviceId = $this->normalizeLiveDeviceId($request->input('device_id', ''));
 
-        if (!in_array($type, ['offer', 'answer', 'ice', 'bye'], true)) {
+        if (!in_array($type, ['offer', 'answer', 'ice', 'bye', 'claim'], true)) {
             return response()->json(['success' => false, 'message' => 'type không hợp lệ'], 422);
         }
         if ($session === '' || strlen($session) > 64) {
             return response()->json(['success' => false, 'message' => 'session không hợp lệ'], 422);
         }
-        if ($type !== 'bye' && $payload === '') {
+        if (!in_array($type, ['bye', 'claim'], true) && $payload === '') {
             return response()->json(['success' => false, 'message' => 'Thiếu payload'], 422);
         }
         // Offer/answer/ICE payload ~ vài KB; chặn spam
@@ -1573,19 +1589,64 @@ class ApiController extends Controller
 
         $state = $this->readWebrtcState($side);
 
+        // ĐT claim quyền LIVE trước khi mở camera — chặn thiết bị thứ 2
+        if ($type === 'claim' && $from === 'phone') {
+            if ($deviceId === '') {
+                return response()->json(['success' => false, 'message' => 'Thiếu device_id'], 422);
+            }
+            $claim = $this->assertLivePublisherAllowed($side, $deviceId, $state);
+            if (!$claim['ok']) {
+                return response()->json([
+                    'success' => false,
+                    'conflict' => true,
+                    'message' => $claim['message'],
+                ], 409);
+            }
+            $state = $claim['state'] ?? $state;
+            if ($this->isLivePublisherActive($state) && ($state['device_id'] ?? '') === $deviceId) {
+                $state['updated_at'] = time();
+                $state['user_id'] = $this->currentUserScopeId();
+            } else {
+                $state = [
+                    'session' => null,
+                    'device_id' => $deviceId,
+                    'seq' => 0,
+                    'updated_at' => time(),
+                    'user_id' => $this->currentUserScopeId(),
+                    'msgs' => [],
+                ];
+            }
+            $this->writeWebrtcState($side, $state);
+            return response()->json(['success' => true, 'claimed' => true]);
+        }
+
         if ($type === 'offer' && $from === 'phone') {
+            if ($deviceId !== '') {
+                $claim = $this->assertLivePublisherAllowed($side, $deviceId, $state);
+                if (!$claim['ok']) {
+                    return response()->json([
+                        'success' => false,
+                        'conflict' => true,
+                        'message' => $claim['message'],
+                    ], 409);
+                }
+            }
             // Session mới từ ĐT → xóa tín hiệu cũ
             $state = [
                 'session' => $session,
+                'device_id' => $deviceId !== '' ? $deviceId : ($state['device_id'] ?? null),
                 'seq' => 0,
                 'updated_at' => time(),
                 'user_id' => $this->currentUserScopeId(),
                 'msgs' => [],
             ];
         } elseif ($type === 'bye') {
-            if (($state['session'] ?? null) === $session) {
+            $ownsSession = ($state['session'] ?? null) === $session;
+            $ownsDevice = $deviceId !== '' && ($state['device_id'] ?? null) === $deviceId;
+            if ($ownsSession || $ownsDevice) {
                 $state = [
                     'session' => null,
+                    'device_id' => null,
                     'seq' => 0,
                     'updated_at' => time(),
                     'user_id' => $this->currentUserScopeId(),
@@ -1607,6 +1668,9 @@ class ApiController extends Controller
         $state['seq'] = $seq;
         $state['updated_at'] = time();
         $state['user_id'] = $this->currentUserScopeId();
+        if ($from === 'phone' && $deviceId !== '') {
+            $state['device_id'] = $deviceId;
+        }
         $state['msgs'][] = [
             'id' => $seq,
             'from' => $from,
@@ -1643,6 +1707,7 @@ class ApiController extends Controller
         if ($session && (time() - (int) ($state['updated_at'] ?? 0)) > 180) {
             $state = [
                 'session' => null,
+                'device_id' => null,
                 'seq' => 0,
                 'updated_at' => time(),
                 'user_id' => $this->currentUserScopeId(),
@@ -1702,12 +1767,12 @@ class ApiController extends Controller
     {
         $path = $this->webrtcPath($side);
         if (!is_file($path)) {
-            return ['session' => null, 'seq' => 0, 'updated_at' => 0, 'msgs' => []];
+            return ['session' => null, 'device_id' => null, 'seq' => 0, 'updated_at' => 0, 'msgs' => []];
         }
         $raw = @file_get_contents($path);
         $data = json_decode((string) $raw, true);
         if (!is_array($data)) {
-            return ['session' => null, 'seq' => 0, 'updated_at' => 0, 'msgs' => []];
+            return ['session' => null, 'device_id' => null, 'seq' => 0, 'updated_at' => 0, 'msgs' => []];
         }
         return $data;
     }
@@ -1721,5 +1786,60 @@ class ApiController extends Controller
             @copy($tmp, $path);
             @unlink($tmp);
         }
+    }
+
+    /** TTL khóa LIVE: hết heartbeat → thiết bị khác được vào */
+    private function livePublisherTtlSeconds()
+    {
+        return 30;
+    }
+
+    private function normalizeLiveDeviceId($raw)
+    {
+        $id = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $raw);
+        if ($id === '' || strlen($id) > 64) {
+            return '';
+        }
+        return $id;
+    }
+
+    private function isLivePublisherActive(array $state)
+    {
+        $deviceId = (string) ($state['device_id'] ?? '');
+        if ($deviceId === '') {
+            return false;
+        }
+        return (time() - (int) ($state['updated_at'] ?? 0)) < $this->livePublisherTtlSeconds();
+    }
+
+    /**
+     * @return array{ok:bool,message?:string,state?:array}
+     */
+    private function assertLivePublisherAllowed($side, $deviceId, ?array $state = null)
+    {
+        $state = $state ?? $this->readWebrtcState($side);
+        if ($this->isLivePublisherActive($state) && ($state['device_id'] ?? '') !== $deviceId) {
+            return [
+                'ok' => false,
+                'message' => 'Đang có thiết bị khác kết nối camera này',
+                'state' => $state,
+            ];
+        }
+        return ['ok' => true, 'state' => $state];
+    }
+
+    private function touchLivePublisher($side, $deviceId, ?array $state = null)
+    {
+        $state = $state ?? $this->readWebrtcState($side);
+        $now = time();
+        $sameDevice = ($state['device_id'] ?? '') === $deviceId;
+        $needWrite = !$sameDevice || ($now - (int) ($state['updated_at'] ?? 0)) >= 8;
+        if (!$needWrite) {
+            return;
+        }
+        $state['device_id'] = $deviceId;
+        $state['updated_at'] = $now;
+        $state['user_id'] = $this->currentUserScopeId();
+        $this->writeWebrtcState($side, $state);
     }
 }
