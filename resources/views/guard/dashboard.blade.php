@@ -2,6 +2,22 @@
 
 @section('title', 'Giám sát Xe ra vào')
 
+@push('css')
+<style>
+    /* 3.5 + 3.5 + 2.5 + 2.5 = 12 */
+    @media (min-width: 1200px) {
+        .col-xl-3-5 {
+            flex: 0 0 auto;
+            width: 29.16666667%;
+        }
+        .col-xl-2-5 {
+            flex: 0 0 auto;
+            width: 20.83333333%;
+        }
+    }
+</style>
+@endpush
+
 @section('content')
 <div class="container-fluid">
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
@@ -9,9 +25,9 @@
         <span class="badge bg-dark" id="device-role-badge">Máy tính giám sát</span>
     </div>
 
-    <div class="row g-4 mb-4">
-        <!-- Cot 1: Camera Xe Vao -->
-        <div class="col-12 col-xl-4">
+    <div class="row g-3 mb-4" id="comparison-section">
+        <!-- Cot 1 (3.5): Camera Xe Vao -->
+        <div class="col-12 col-xl-3-5">
             <div class="card h-100 border-primary shadow-sm">
                 <div class="card-header bg-primary text-white d-flex align-items-center justify-content-between py-3">
                     <h5 class="mb-0 text-white fw-bold fs-6"><i class="material-icons-outlined align-middle me-1">login</i> Camera Xe Vào (Check-In)</h5>
@@ -55,8 +71,35 @@
             </div>
         </div>
 
-        <!-- Cot 2: Camera Xe Ra -->
-        <div class="col-12 col-xl-4">
+        <!-- Cot 2 (2.5): Doi chieu xe vao -->
+        <div class="col-12 col-md-6 col-xl-2-5">
+            <div class="card h-100 border-primary shadow-sm">
+                <div class="card-header bg-primary text-white py-2 px-2">
+                    <h5 class="mb-1 text-white fw-bold" style="font-size: 13px; line-height: 1.3;">
+                        <i class="material-icons-outlined align-middle me-1" style="font-size: 16px;">login</i> Đối chiếu xe vào
+                    </h5>
+                    <span class="badge bg-light text-primary w-100 py-1 d-block text-truncate" id="comp-in-status-badge" style="font-size: 11px;">Chờ quét xe vào</span>
+                </div>
+                <div class="card-body p-2">
+                    <div class="border rounded p-2 bg-light shadow-sm">
+                        <div class="d-flex flex-column gap-1 mb-1">
+                            <span class="badge bg-primary align-self-start px-2 py-1">Ảnh Xe Vào</span>
+                            <span class="small fw-semibold">BSX: <strong id="comp-in-plate" class="text-primary">-</strong></span>
+                        </div>
+                        <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 120px;">
+                            <img id="comp-in-img" src="" alt="Ảnh xe vào"
+                                style="max-height: 100%; max-width: 100%; object-fit: contain; display: none;">
+                            <span id="comp-in-empty" class="text-muted text-center" style="font-size: 11px;">
+                                <i class="material-icons-outlined fs-4">image_not_supported</i><br>Chưa có ảnh vào
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cot 3 (3.5): Camera Xe Ra -->
+        <div class="col-12 col-xl-3-5">
             <div class="card h-100 border-danger shadow-sm">
                 <div class="card-header bg-danger text-white d-flex align-items-center justify-content-between py-3">
                     <h5 class="mb-0 text-white fw-bold fs-6"><i class="material-icons-outlined align-middle me-1">logout</i> Camera Xe Ra (Check-Out)</h5>
@@ -107,45 +150,51 @@
             </div>
         </div>
 
-        <!-- Cot 3: Doi chieu -->
-        <div class="col-12 col-xl-4">
-            <div class="card h-100 border-dark shadow-sm" id="comparison-section">
-                <div class="card-header bg-dark text-white p-3">
-                    <div class="d-flex align-items-center justify-content-between mb-2">
-                        <h5 class="mb-0 text-white fw-bold fs-6"><i class="material-icons-outlined align-middle me-1">compare</i> Đối chiếu Hình ảnh</h5>
-                    </div>
-                    <span class="badge bg-warning text-dark w-100 py-2 d-block text-truncate" id="comp-status-badge">Đang chờ nhận diện xe ra...</span>
+        <!-- Cot 4 (2.5): Doi chieu xe ra (anh vao + anh ra) -->
+        <div class="col-12 col-md-6 col-xl-2-5">
+            <div class="card h-100 border-danger shadow-sm">
+                <div class="card-header bg-danger text-white py-2 px-2">
+                    <h5 class="mb-1 text-white fw-bold" style="font-size: 13px; line-height: 1.3;">
+                        <i class="material-icons-outlined align-middle me-1" style="font-size: 16px;">logout</i> Đối chiếu xe ra
+                    </h5>
+                    <span class="badge bg-warning text-dark w-100 py-1 d-block text-truncate" id="comp-status-badge" style="font-size: 11px;">Chờ quét / xác nhận xe ra</span>
                 </div>
-                <div class="card-body p-3">
-                    <div class="d-flex flex-column gap-3">
+                <div class="card-body p-2">
+                    <div class="d-flex flex-column gap-2">
                         <div class="border rounded p-2 bg-light shadow-sm">
-                            <div class="d-flex justify-content-between align-items-center mb-1">
-                                <span class="badge bg-primary px-2 py-1">Ảnh Xe Vào</span>
-                                <span class="small fw-semibold">BSX: <strong id="comp-entry-plate" class="text-primary fs-6">-</strong></span>
+                            <div class="d-flex flex-column gap-1 mb-1">
+                                <span class="badge bg-primary align-self-start px-2 py-1">Ảnh Xe Vào</span>
+                                <span class="small fw-semibold">BSX: <strong id="comp-pair-entry-plate" class="text-primary">-</strong></span>
                             </div>
-                            <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 140px;">
-                                <img id="comp-entry-img" src="" alt="Ảnh xe vào" style="max-height: 100%; max-width: 100%; object-fit: contain; display: none;">
-                                <span id="comp-entry-empty" class="text-muted text-center" style="font-size: 12px;"><i class="material-icons-outlined fs-3">image_not_supported</i><br>Chưa có ảnh vào</span>
+                            <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 120px;">
+                                <img id="comp-pair-entry-img" src="" alt="Ảnh xe vào (đối chiếu ra)"
+                                    style="max-height: 100%; max-width: 100%; object-fit: contain; display: none;">
+                                <span id="comp-pair-entry-empty" class="text-muted text-center" style="font-size: 11px;">
+                                    <i class="material-icons-outlined fs-4">image_not_supported</i><br>Chưa có ảnh vào
+                                </span>
                             </div>
                         </div>
                         <div class="border rounded p-2 bg-light shadow-sm">
-                            <div class="d-flex justify-content-between align-items-center mb-1">
-                                <span class="badge bg-danger px-2 py-1">Ảnh Xe Ra</span>
-                                <span class="small fw-semibold">BSX: <strong id="comp-exit-plate" class="text-danger fs-6">-</strong></span>
+                            <div class="d-flex flex-column gap-1 mb-1">
+                                <span class="badge bg-danger align-self-start px-2 py-1">Ảnh Xe Ra</span>
+                                <span class="small fw-semibold">BSX: <strong id="comp-exit-plate" class="text-danger">-</strong></span>
                             </div>
-                            <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 140px;">
-                                <img id="comp-exit-img" src="" alt="Ảnh xe ra" style="max-height: 100%; max-width: 100%; object-fit: contain; display: none;">
-                                <span id="comp-exit-empty" class="text-muted text-center" style="font-size: 12px;"><i class="material-icons-outlined fs-3">image_not_supported</i><br>Chưa có ảnh ra</span>
+                            <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 120px;">
+                                <img id="comp-exit-img" src="" alt="Ảnh xe ra"
+                                    style="max-height: 100%; max-width: 100%; object-fit: contain; display: none;">
+                                <span id="comp-exit-empty" class="text-muted text-center" style="font-size: 11px;">
+                                    <i class="material-icons-outlined fs-4">image_not_supported</i><br>Chưa có ảnh ra
+                                </span>
                             </div>
                         </div>
                     </div>
-                    <div class="mt-3 pt-3 border-top" id="validation-buttons" style="display: none;">
-                        <p class="text-center text-muted mb-2 fw-semibold" style="font-size: 13px;">Đối chiếu ảnh:</p>
-                        <div class="d-flex gap-2">
-                            <button type="button" id="btn-valid" class="btn btn-success flex-fill fw-bold shadow-sm py-2">
+                    <div class="mt-2 pt-2 border-top" id="validation-buttons" style="display: none;">
+                        <p class="text-center text-muted mb-2 fw-semibold" style="font-size: 12px;">Đối chiếu ảnh:</p>
+                        <div class="d-flex flex-column gap-2">
+                            <button type="button" id="btn-valid" class="btn btn-success fw-bold shadow-sm py-2">
                                 <i class="material-icons-outlined align-middle me-1">check_circle</i> Hợp lệ
                             </button>
-                            <button type="button" id="btn-invalid" class="btn btn-outline-danger flex-fill fw-bold shadow-sm py-2">
+                            <button type="button" id="btn-invalid" class="btn btn-outline-danger fw-bold shadow-sm py-2">
                                 <i class="material-icons-outlined align-middle me-1">cancel</i> Không hợp lệ
                             </button>
                         </div>
@@ -684,23 +733,46 @@ $(document).ready(function() {
         });
     }
 
+    function setEntryCompare(plate, imageUrl, statusText) {
+        $('#comp-in-plate').text(plate || '-');
+        if (imageUrl) {
+            $('#comp-in-empty').hide();
+            $('#comp-in-img').attr('src', imageUrl).show();
+        } else {
+            $('#comp-in-img').hide().attr('src', '');
+            $('#comp-in-empty').show();
+        }
+        $('#comp-in-status-badge')
+            .removeClass('bg-warning text-dark bg-danger text-white')
+            .addClass('bg-light text-primary')
+            .text(statusText || 'Xe vào OK');
+    }
+
+    function clearEntryCompare() {
+        $('#comp-in-img').hide().attr('src', '');
+        $('#comp-in-empty').show();
+        $('#comp-in-plate').text('-');
+        $('#comp-in-status-badge')
+            .removeClass('bg-warning text-dark bg-danger text-white')
+            .addClass('bg-light text-primary')
+            .text('Chờ quét xe vào');
+    }
+
+    function clearExitCompare() {
+        $('#comp-pair-entry-img, #comp-exit-img').hide().attr('src', '');
+        $('#comp-pair-entry-empty, #comp-exit-empty').show();
+        $('#comp-pair-entry-plate, #comp-exit-plate').text('-');
+        $('#comp-status-badge').removeClass('bg-success bg-danger text-white').addClass('bg-warning text-dark')
+            .text('Chờ quét / xác nhận xe ra');
+        $('#validation-buttons').hide();
+    }
+
     function resetEntryUi() {
         if (entryTimerInterval) clearInterval(entryTimerInterval);
         entryShowingResult = false;
-        // Không đụng ô camera LIVE — chỉ ẩn kết quả + xóa ảnh đối chiếu xe vào
+        // Ẩn kết quả cột camera + xóa ảnh Đối chiếu xe vào (không đụng Đối chiếu xe ra)
         $('#entry-result, #entry-error').fadeOut();
-        // Nếu đang chờ xác nhận xe ra thì giữ nguyên cột đối chiếu
-        if (!exitLockedByPending && !currentLogId) {
-            $('#comp-entry-img').hide().attr('src', '');
-            $('#comp-entry-empty').show();
-            $('#comp-entry-plate').text('-');
-            $('#comp-exit-img').hide().attr('src', '');
-            $('#comp-exit-empty').show();
-            $('#comp-exit-plate').text('-');
-            $('#comp-status-badge').removeClass('bg-success bg-danger text-white').addClass('bg-warning text-dark')
-                .text('Đang chờ nhận diện xe ra...');
-            $('#validation-buttons').hide();
-        }
+        clearEntryCompare();
     }
 
     function resetExitAndComparison(opts) {
@@ -712,15 +784,11 @@ $(document).ready(function() {
         if (!opts.keepCode) {
             $('#exit-code').val('');
         }
-        // Không đụng ô camera LIVE — chỉ xóa đối chiếu / kết quả
+        // Không đụng ô camera LIVE / nửa trên đối chiếu xe vào
         $('#exit-result').hide();
         $('#exit-auto-timer-wrap').addClass('d-none');
         $('#btn-exit-retry-inline').hide();
-        $('#comp-entry-img, #comp-exit-img').hide().attr('src', '');
-        $('#comp-entry-empty, #comp-exit-empty').show();
-        $('#comp-entry-plate, #comp-exit-plate').text('-');
-        $('#comp-status-badge').removeClass('bg-success bg-danger text-white').addClass('bg-warning text-dark').text('Đang chờ nhận diện xe ra...');
-        $('#validation-buttons').hide();
+        clearExitCompare();
         currentLogId = null;
         lastSeenPendingId = null;
         lastArmedCode = '';
@@ -785,18 +853,8 @@ $(document).ready(function() {
     function showEntrySuccess(plate, code, imageUrl) {
         entryShowingResult = false;
         $('#entry-error').hide();
-        // Ảnh kết quả chỉ hiện ở cột Đối chiếu — không đè lên ô LIVE
-        if (imageUrl) {
-            $('#comp-entry-empty').hide();
-            $('#comp-entry-img').attr('src', imageUrl).show();
-        }
-        $('#comp-entry-plate').text(plate || '-');
-        $('#comp-exit-img').hide().attr('src', '');
-        $('#comp-exit-empty').show();
-        $('#comp-exit-plate').text('-');
-        $('#comp-status-badge').removeClass('bg-success bg-danger text-white').addClass('bg-warning text-dark')
-            .text('Xe vào OK — chờ nhận diện xe ra...');
-        $('#validation-buttons').hide();
+        // Chỉ cập nhật nửa trên "Đối chiếu Hình ảnh xe vào" — không đụng nửa dưới xe ra
+        setEntryCompare(plate, imageUrl, 'Xe vào OK');
 
         $('#res-plate').text(plate || '');
         $('#res-code').text(code || '');
@@ -821,11 +879,12 @@ $(document).ready(function() {
         entryShowingResult = false;
         $('#entry-result').hide();
 
-        if (alert.entry_image) {
-            $('#comp-entry-empty').hide();
-            $('#comp-entry-img').attr('src', alert.entry_image).show();
-            $('#comp-entry-plate').text(alert.plate_number || '-');
-        }
+        // Cảnh báo xe trong bãi → nửa trên đối chiếu xe vào (không đè nửa dưới)
+        setEntryCompare(alert.plate_number, alert.entry_image || null, 'Xe vẫn trong bãi');
+        $('#comp-in-status-badge')
+            .removeClass('bg-light text-primary')
+            .addClass('bg-danger text-white')
+            .text('Xe vẫn trong bãi');
 
         $('#entry-error-title').text('Xe vẫn nằm trong bãi');
         $('#entry-error-msg').text(alert.message || 'Xe này chưa ra khỏi bãi — không thể nhận diện vào lần nữa.');
@@ -851,12 +910,12 @@ $(document).ready(function() {
         currentLogId = data.log_id;
         lastSeenPendingId = data.log_id;
         exitLockedByPending = true;
-        // Ảnh chỉ vào cột Đối chiếu — ô Camera Xe Ra vẫn dành cho LIVE
+        // Nửa dưới: cặp ảnh vào + ra của lượt đang xác nhận (không đụng nửa trên)
         if (data.entry_image) {
-            $('#comp-entry-empty').hide();
-            $('#comp-entry-img').attr('src', data.entry_image).show();
+            $('#comp-pair-entry-empty').hide();
+            $('#comp-pair-entry-img').attr('src', data.entry_image).show();
         }
-        $('#comp-entry-plate').text(data.entry_plate || '-');
+        $('#comp-pair-entry-plate').text(data.entry_plate || '-');
         if (data.exit_image) {
             $('#comp-exit-empty').hide();
             $('#comp-exit-img').attr('src', data.exit_image).show();
@@ -919,17 +978,6 @@ $(document).ready(function() {
             .text('Lỗi — có thể làm lại');
     }
 
-    function isPageReload() {
-        try {
-            const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
-            if (nav && nav.type === 'reload') return true;
-        } catch (e) {}
-        try {
-            if (performance.navigation && performance.navigation.type === 1) return true;
-        } catch (e) {}
-        return false;
-    }
-
     function pollMonitor() {
         $.get(API.monitor)
             .done(function(res) {
@@ -937,7 +985,7 @@ $(document).ready(function() {
 
                 // LIVE đã poll riêng — không apply ở đây để tránh đè chậm
 
-                // Lần poll đầu: F5 → về mặc định; vào trang bình thường → giữ đối chiếu đang chờ
+                // Lần poll đầu: luôn về mặc định (F5 / mở trang / đăng nhập lại) — không giữ chờ xác nhận cũ
                 if (!monitorBootstrapped) {
                     if (res.last_entry && res.last_entry.id) {
                         lastSeenEntryId = res.last_entry.id;
@@ -946,47 +994,34 @@ $(document).ready(function() {
                         lastSeenEntryAlertId = String(res.entry_alert.id);
                     }
 
-                    if (isPageReload()) {
-                        // F5: hủy pending + mã kích hoạt, UI về mặc định
-                        if (res.pending_validation && res.pending_validation.log_id) {
-                            lastSeenPendingId = res.pending_validation.log_id;
-                        } else {
-                            lastSeenPendingId = null;
-                        }
-                        currentLogId = null;
-                        exitLockedByPending = false;
-                        clearExitTimer();
-                        autoExitInProgress = false;
-                        $('#exit-result').hide();
-                        $('#validation-buttons').hide();
-                        $('#exit-code').prop('disabled', false).val('');
-                        $('#comp-entry-img, #comp-exit-img').hide().attr('src', '');
-                        $('#comp-entry-empty, #comp-exit-empty').show();
-                        $('#comp-entry-plate, #comp-exit-plate').text('-');
-                        $('#comp-status-badge').removeClass('bg-success bg-danger text-white').addClass('bg-warning text-dark')
-                            .text('Đang chờ nhận diện xe ra...');
-                        lastArmedCode = '';
-                        lastArmFailedCode = '';
-                        lastArmConflictCode = '';
-                        $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
-                            .text('Nhập mã 6 ký tự để ĐT bắt đầu quét');
+                    // Đánh dấu pending đang hủy để poll sau không hiện lại (kể cả khi API chậm)
+                    const dismissedPendingId = (res.pending_validation && res.pending_validation.log_id)
+                        ? res.pending_validation.log_id
+                        : null;
+                    lastSeenPendingId = dismissedPendingId;
 
-                        const clearJobs = [$.post(API.retryExit, {})];
-                        if (res.armed_exit_code) {
-                            clearJobs.push($.post(API.clearExit));
-                        }
-                        $.when.apply($, clearJobs).always(function() {
-                            lastSeenPendingId = null;
-                            monitorBootstrapped = true;
-                        });
-                    } else {
-                        // Vào trang / tắt cam ĐT: giữ nguyên đối chiếu nếu đang chờ xác nhận
-                        if (res.pending_validation && res.pending_validation.log_id) {
-                            lastSeenPendingId = res.pending_validation.log_id;
-                            showPendingValidation(res.pending_validation);
-                        }
-                        monitorBootstrapped = true;
+                    currentLogId = null;
+                    exitLockedByPending = false;
+                    clearExitTimer();
+                    autoExitInProgress = false;
+                    $('#exit-result').hide();
+                    $('#exit-code').prop('disabled', false).val('');
+                    clearEntryCompare();
+                    clearExitCompare();
+                    lastArmedCode = '';
+                    lastArmFailedCode = '';
+                    lastArmConflictCode = '';
+                    $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
+                        .text('Nhập mã 6 ký tự để ĐT bắt đầu quét');
+
+                    const clearJobs = [$.post(API.retryExit, {})];
+                    if (res.armed_exit_code) {
+                        clearJobs.push($.post(API.clearExit));
                     }
+                    $.when.apply($, clearJobs).always(function() {
+                        // Không xóa lastSeenPendingId ở đây — tránh hiện lại cửa sổ chờ xác nhận
+                        monitorBootstrapped = true;
+                    });
                     return;
                 }
 
@@ -1007,9 +1042,13 @@ $(document).ready(function() {
 
                 const pending = res.pending_validation;
                 if (pending && pending.log_id) {
-                    // Chỉ hiện lượt mới — không hiện lại sau F5 (đã hủy pending lúc bootstrap)
+                    // Lượt mới → hiện đối chiếu. Cùng lượt đang chờ mà UI bị lệch → đồng bộ lại (không để xe vào đè mất)
                     if (pending.log_id !== lastSeenPendingId) {
                         lastSeenPendingId = pending.log_id;
+                        showPendingValidation(pending);
+                    } else if (exitLockedByPending && currentLogId === pending.log_id
+                        && !$('#validation-buttons').is(':visible') && !pending.match
+                        && !$('#exit-auto-timer-wrap').is(':visible')) {
                         showPendingValidation(pending);
                     }
                 } else if (lastSeenPendingId && !pending) {
