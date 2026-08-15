@@ -43,6 +43,175 @@ class ApiController extends Controller
         return $dir;
     }
 
+    private function unrecognizedPlateLabel()
+    {
+        return 'không thể nhận diện';
+    }
+
+    private function normalizeScanPhase($phase)
+    {
+        $phase = strtolower(trim((string) $phase));
+        return in_array($phase, ['detect', 'ocr', 'saving', 'idle'], true) ? $phase : '';
+    }
+
+    private function readLiveMetaFile($metaPath)
+    {
+        if (!is_file($metaPath)) {
+            return [];
+        }
+        $meta = json_decode((string) @file_get_contents($metaPath), true);
+        return is_array($meta) ? $meta : [];
+    }
+
+    private function liveScanPhaseFromMeta(array $meta)
+    {
+        $phase = $this->normalizeScanPhase($meta['scan_phase'] ?? '');
+        if ($phase === '') {
+            return 'detect';
+        }
+        $phaseTs = (int) ($meta['phase_ts'] ?? 0);
+        if ($phaseTs > 0) {
+            $ageMs = (int) round(microtime(true) * 1000) - $phaseTs;
+            // OCR có thể ~60s; quá 90s không refresh → coi như đang tìm biển
+            if ($ageMs > 90000) {
+                return 'detect';
+            }
+        }
+        return $phase;
+    }
+
+    private function isUnrecognizedPlate($plate)
+    {
+        $p = trim(mb_strtolower((string) $plate));
+        return $p === '' || $p === 'không thể nhận diện';
+    }
+
+    private function platesMatch($entryPlate, $exitPlate)
+    {
+        if ($this->isUnrecognizedPlate($entryPlate) || $this->isUnrecognizedPlate($exitPlate)) {
+            return false;
+        }
+        $cleanEntry = preg_replace('/[^A-Z0-9]/i', '', (string) $entryPlate);
+        $cleanExit = preg_replace('/[^A-Z0-9]/i', '', (string) $exitPlate);
+        return $cleanEntry !== '' && strcasecmp($cleanEntry, $cleanExit) === 0;
+    }
+
+    private function generateUniqueVehicleCode()
+    {
+        do {
+            $code = chr(rand(65, 90)) . chr(rand(65, 90)) . rand(1000, 9999);
+        } while (VehicleLog::where('code', $code)->exists());
+
+        return $code;
+    }
+
+    /**
+     * Ảnh chụp từ PC (canvas) hoặc fallback frame LIVE cuối cùng trên đĩa.
+     */
+    private function storeManualVehicleImage($side, Request $request)
+    {
+        $side = $side === 'exit' ? 'exit' : 'entry';
+        $uploadDir = $this->ensureDir(public_path('uploads/vehicles'));
+
+        if ($request->hasFile('image')) {
+            $file = $request->file('image');
+            $ext = strtolower((string) $file->getClientOriginalExtension());
+            if (!in_array($ext, ['jpg', 'jpeg', 'png', 'webp'], true)) {
+                $ext = 'jpg';
+            }
+            $filename = $side . '_' . time() . '_' . uniqid() . '.' . $ext;
+            $file->move($uploadDir, $filename);
+            $fullPath = $uploadDir . DIRECTORY_SEPARATOR . $filename;
+            if (!is_file($fullPath) || (int) @filesize($fullPath) < 200) {
+                @unlink($fullPath);
+                return null;
+            }
+            return 'public/uploads/vehicles/' . $filename;
+        }
+
+        $uid = $this->currentUserScopeId();
+        $livePath = public_path('uploads/live/' . $uid . '/' . $side . '.jpg');
+        if (!is_file($livePath)) {
+            return null;
+        }
+        $bin = @file_get_contents($livePath);
+        if (!is_string($bin) || strlen($bin) < 200) {
+            return null;
+        }
+        $filename = $side . '_' . time() . '_' . uniqid() . '.jpg';
+        $fullPath = $uploadDir . DIRECTORY_SEPARATOR . $filename;
+        if (@file_put_contents($fullPath, $bin) === false) {
+            return null;
+        }
+        return 'public/uploads/vehicles/' . $filename;
+    }
+
+    private function manualOcrPausePath()
+    {
+        return $this->monitorStateDir() . DIRECTORY_SEPARATOR . 'ocr_pause.json';
+    }
+
+    private function writeManualOcrPause($seconds = 10)
+    {
+        @file_put_contents($this->manualOcrPausePath(), json_encode([
+            'until' => time() + max(1, (int) $seconds),
+        ]));
+    }
+
+    private function readManualOcrPauseRemaining()
+    {
+        $path = $this->manualOcrPausePath();
+        if (!is_file($path)) {
+            return 0;
+        }
+        $data = json_decode((string) @file_get_contents($path), true);
+        $left = (int) ($data['until'] ?? 0) - time();
+        if ($left <= 0) {
+            @unlink($path);
+            return 0;
+        }
+        return $left;
+    }
+
+    private function scanHoldPath()
+    {
+        return $this->monitorStateDir() . DIRECTORY_SEPARATOR . 'scan_hold.json';
+    }
+
+    private function writeScanHold($reason = 'already_inside')
+    {
+        @file_put_contents($this->scanHoldPath(), json_encode([
+            'reason' => $reason,
+            'ts' => time(),
+        ], JSON_UNESCAPED_UNICODE));
+    }
+
+    private function clearScanHold()
+    {
+        $path = $this->scanHoldPath();
+        if (is_file($path)) {
+            @unlink($path);
+        }
+    }
+
+    private function isScanHoldActive()
+    {
+        return is_file($this->scanHoldPath());
+    }
+
+    private function clearEntryAlert()
+    {
+        $path = $this->entryAlertPath();
+        if (is_file($path)) {
+            @unlink($path);
+        }
+        try {
+            \Illuminate\Support\Facades\Cache::forget($this->entryAlertCacheKey());
+        } catch (\Throwable $e) {
+            // ignore
+        }
+    }
+
     private function getPythonExecutable()
     {
         $envPython = env('PYTHON_PATH');
@@ -577,17 +746,16 @@ class ApiController extends Controller
                 ];
                 // Đẩy lên PC giám sát (kể cả khi quét từ ĐT)
                 $this->writeEntryAlert($alert);
+                $this->writeScanHold('already_inside');
 
                 return response()->json(array_merge([
                     'success' => false,
                     'already_inside' => true,
+                    'hold_scan' => true,
                 ], $alert));
             }
 
-            // Generate a 6-character code (2 letters, 4 numbers)
-            do {
-                $code = chr(rand(65, 90)) . chr(rand(65, 90)) . rand(1000, 9999);
-            } while (VehicleLog::where('code', $code)->exists());
+            $code = $this->generateUniqueVehicleCode();
 
             // Save log
             $log = VehicleLog::create([
@@ -599,13 +767,16 @@ class ApiController extends Controller
                 'guard_in_id' => auth()->id()
             ]);
 
+            $this->writeManualOcrPause(10);
+
             return response()->json([
                 'success' => true,
                 'log_id' => $log->id,
                 'plate_number' => $plate,
                 'code' => $code,
                 'image_url' => asset($relativePath),
-                'message' => 'Nhận diện thành công. Xe đã vào.'
+                'message' => 'Nhận diện thành công. Xe đã vào.',
+                'pause_ocr_s' => 10,
             ]);
         } catch (\Exception $e) {
             $msg = $e->getMessage();
@@ -681,28 +852,35 @@ class ApiController extends Controller
             }
 
             $exitPlate = strtoupper($aiResult['plate']);
+            $isMatch = $this->platesMatch($log->plate_number, $exitPlate);
 
-            // Compare Plates
-            $cleanEntry = preg_replace('/[^A-Z0-9]/i', '', $log->plate_number);
-            $cleanExit = preg_replace('/[^A-Z0-9]/i', '', $exitPlate);
+            if ($isMatch) {
+                // Biển khớp → đổi in → out ngay (không đợi đếm 10s trên frontend / F5)
+                $log->update([
+                    'status' => 'out',
+                    'exit_time' => now(),
+                    'exit_image' => $relativePath,
+                    'exit_plate_number' => $exitPlate,
+                    'guard_out_id' => auth()->id(),
+                    'is_valid' => true,
+                ]);
+                $this->clearLocalArmedExitCodeOnly();
+                $this->releaseGlobalArmedCode(strtoupper((string) $log->code));
+            } else {
+                // Biển không khớp — chờ bảo vệ bấm Hợp lệ / Không hợp lệ
+                $log->update([
+                    'status' => 'in',
+                    'exit_time' => null,
+                    'exit_image' => $relativePath,
+                    'exit_plate_number' => $exitPlate,
+                    'guard_out_id' => auth()->id(),
+                    'is_valid' => null,
+                ]);
+                $this->clearLocalArmedExitCodeOnly();
+                $this->touchGlobalArmedCode(strtoupper((string) $log->code), $log->id);
+            }
 
-            $isMatch = ($cleanEntry === $cleanExit);
-
-            // Chỉ lưu ảnh/biển số xe ra để đối chiếu — chưa checkout.
-            // Bảo vệ phải bấm Hợp lệ / Không hợp lệ mới quyết định cho ra.
-            $log->update([
-                'status' => 'in',
-                'exit_time' => null,
-                'exit_image' => $relativePath,
-                'exit_plate_number' => $exitPlate,
-                'guard_out_id' => auth()->id(),
-                'is_valid' => null,
-            ]);
-
-            // Tắt kích hoạt local (ĐT ngừng quét) nhưng GIỮ khóa toàn cục
-            // → tài khoản khác vẫn thấy "đang được tài khoản khác sử dụng" khi đang đối chiếu
-            $this->clearLocalArmedExitCodeOnly();
-            $this->touchGlobalArmedCode(strtoupper((string) $log->code), $log->id);
+            $this->writeManualOcrPause(10);
 
             return response()->json([
                 'success' => true,
@@ -713,8 +891,10 @@ class ApiController extends Controller
                 'entry_plate' => $log->plate_number,
                 'exit_image' => asset($relativePath),
                 'exit_plate' => $exitPlate,
+                'pause_ocr_s' => 10,
+                'already_out' => $isMatch,
                 'message' => $isMatch
-                    ? ('Biển số khớp: ' . $exitPlate . '. Vui lòng xác nhận Hợp lệ / Không hợp lệ.')
+                    ? ('Biển số khớp: ' . $exitPlate)
                     : ('Biển số xe ra (' . $exitPlate . ') không khớp với xe vào (' . $log->plate_number . '). Vui lòng xác nhận.')
             ]);
         } catch (\Exception $e) {
@@ -727,6 +907,166 @@ class ApiController extends Controller
                 'message' => 'Lỗi hệ thống: ' . iconv('UTF-8', 'UTF-8//IGNORE', $msg)
             ], 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
         }
+    }
+
+    /**
+     * PC giám sát xác nhận thủ công khi OCR không đọc được biển (xe vào).
+     * Chụp frame hiện tại, lưu lượt vào với BSX "không thể nhận diện".
+     */
+    public function manualConfirmEntry(Request $request)
+    {
+        $relativePath = $this->storeManualVehicleImage('entry', $request);
+        if (!$relativePath) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Chưa có hình camera xe vào để chụp. Hãy mở camera điện thoại trước.',
+            ]);
+        }
+
+        $this->releaseSessionLock();
+
+        $plate = $this->unrecognizedPlateLabel();
+        $code = $this->generateUniqueVehicleCode();
+
+        $log = VehicleLog::create([
+            'plate_number' => $plate,
+            'code' => $code,
+            'status' => 'in',
+            'entry_time' => now(),
+            'entry_image' => $relativePath,
+            'guard_in_id' => auth()->id(),
+        ]);
+
+        $this->writeManualOcrPause(10);
+
+        return response()->json([
+            'success' => true,
+            'unrecognized' => true,
+            'log_id' => $log->id,
+            'plate_number' => $plate,
+            'code' => $code,
+            'image_url' => asset($relativePath),
+            'message' => 'Xe đã vào thành công.',
+            'pause_ocr_s' => 10,
+        ]);
+    }
+
+    /**
+     * PC giám sát xác nhận thủ công khi OCR không đọc được biển (xe ra).
+     * Cần mã code; không chạy OCR; bảo vệ xác nhận Hợp lệ / Không hợp lệ.
+     */
+    public function manualConfirmExit(Request $request)
+    {
+        $code = strtoupper(trim((string) $request->input('code', '')));
+        if (strlen($code) !== 6) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Vui lòng nhập mã code 6 ký tự trước khi xác nhận xe ra.',
+            ]);
+        }
+
+        $log = VehicleLog::where('code', $code)
+            ->where(function ($q) {
+                $q->where('status', 'in')->orWhere('is_valid', false);
+            })
+            ->latest()
+            ->first();
+
+        if (!$log) {
+            $this->clearArmedExitCodeStorage();
+            return response()->json([
+                'success' => false,
+                'message' => 'Không tìm thấy xe chưa ra với mã code: ' . $code . '. Hãy nhập lại mã.',
+                'retryable' => true,
+            ]);
+        }
+
+        $relativePath = $this->storeManualVehicleImage('exit', $request);
+        if (!$relativePath) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Chưa có hình camera xe ra để chụp. Hãy mở camera điện thoại trước.',
+            ]);
+        }
+
+        $this->releaseSessionLock();
+
+        $exitPlate = $this->unrecognizedPlateLabel();
+
+        $log->update([
+            'status' => 'in',
+            'exit_time' => null,
+            'exit_image' => $relativePath,
+            'exit_plate_number' => $exitPlate,
+            'guard_out_id' => auth()->id(),
+            'is_valid' => null,
+        ]);
+
+        $this->clearLocalArmedExitCodeOnly();
+        $this->touchGlobalArmedCode(strtoupper((string) $log->code), $log->id);
+        $this->writeManualOcrPause(10);
+
+        return response()->json([
+            'success' => true,
+            'match' => false,
+            'unrecognized' => true,
+            'log_id' => $log->id,
+            'code' => $log->code,
+            'entry_image' => $log->entry_image ? asset($log->entry_image) : null,
+            'entry_plate' => $log->plate_number,
+            'exit_image' => asset($relativePath),
+            'exit_plate' => $exitPlate,
+            'message' => 'Đã chụp xe ra (không thể nhận diện biển). Vui lòng xác nhận Hợp lệ / Không hợp lệ.',
+            'pause_ocr_s' => 10,
+        ]);
+    }
+
+    /**
+     * Máy tính bắt đầu đếm 10s → ĐT phải chờ hết mới được quét tiếp.
+     */
+    public function scanCooldown(Request $request)
+    {
+        $seconds = (int) $request->input('seconds', 10);
+        if ($seconds < 1) {
+            $seconds = 10;
+        }
+        if ($seconds > 30) {
+            $seconds = 30;
+        }
+        $this->writeManualOcrPause($seconds);
+        $this->releaseSessionLock();
+
+        return response()->json([
+            'success' => true,
+            'pause_ocr_s' => $this->readManualOcrPauseRemaining(),
+        ]);
+    }
+
+    /**
+     * Bảo vệ bấm Đồng ý trên cảnh báo "xe vẫn trong bãi" → cho ĐT quét lại.
+     */
+    public function ackScanHold()
+    {
+        $this->clearScanHold();
+        $this->clearEntryAlert();
+        $this->releaseSessionLock();
+
+        return response()->json([
+            'success' => true,
+            'hold_scan' => false,
+        ]);
+    }
+
+    public function scanHoldStatus()
+    {
+        $this->releaseSessionLock();
+
+        return response()->json([
+            'success' => true,
+            'hold_scan' => $this->isScanHoldActive(),
+        ], 200, [
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+        ]);
     }
 
     public function validateCheckout(Request $request)
@@ -756,6 +1096,14 @@ class ApiController extends Controller
         $isValid = filter_var($request->is_valid, FILTER_VALIDATE_BOOLEAN);
 
         if ($isValid) {
+            // Đã cho ra rồi (bấm F5 lúc đang đếm) → không đổi lại
+            if ((string) $log->status === 'out' && $log->is_valid) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Đã xác nhận Hợp lệ! Xe đã chuyển sang danh sách xe vào đã ra.'
+                ]);
+            }
+
             // Hợp lệ → chuyển sang danh sách "Xe vào đã ra"
             $log->update([
                 'status' => 'out',
@@ -975,8 +1323,7 @@ class ApiController extends Controller
 
         $pendingPayload = null;
         if ($pendingValidation) {
-            $cleanEntry = preg_replace('/[^A-Z0-9]/i', '', (string) $pendingValidation->plate_number);
-            $cleanExit = preg_replace('/[^A-Z0-9]/i', '', (string) $pendingValidation->exit_plate_number);
+            $isMatch = $this->platesMatch($pendingValidation->plate_number, $pendingValidation->exit_plate_number);
             $pendingPayload = [
                 'log_id' => $pendingValidation->id,
                 'code' => $pendingValidation->code,
@@ -984,19 +1331,46 @@ class ApiController extends Controller
                 'exit_plate' => $pendingValidation->exit_plate_number,
                 'entry_image' => $pendingValidation->entry_image ? asset($pendingValidation->entry_image) : null,
                 'exit_image' => $pendingValidation->exit_image ? asset($pendingValidation->exit_image) : null,
-                'match' => ($cleanEntry !== '' && $cleanEntry === $cleanExit),
-                'message' => ($cleanEntry !== '' && $cleanEntry === $cleanExit)
+                'match' => $isMatch,
+                'message' => $isMatch
                     ? ('Biển số khớp: ' . $pendingValidation->exit_plate_number . '. Vui lòng xác nhận.')
                     : ('Biển số xe ra (' . $pendingValidation->exit_plate_number . ') không khớp với xe vào (' . $pendingValidation->plate_number . ').'),
             ];
+        }
+
+        $matchedPayload = null;
+        if (!$pendingPayload) {
+            $matchedExit = VehicleLog::query()
+                ->where('guard_out_id', $uid)
+                ->where('status', 'out')
+                ->where('is_valid', true)
+                ->whereNotNull('exit_image')
+                ->where('exit_time', '>=', now()->subSeconds(15))
+                ->orderByDesc('id')
+                ->first();
+            if ($matchedExit && $this->platesMatch($matchedExit->plate_number, $matchedExit->exit_plate_number)) {
+                $matchedPayload = [
+                    'log_id' => $matchedExit->id,
+                    'code' => $matchedExit->code,
+                    'entry_plate' => $matchedExit->plate_number,
+                    'exit_plate' => $matchedExit->exit_plate_number,
+                    'entry_image' => $matchedExit->entry_image ? asset($matchedExit->entry_image) : null,
+                    'exit_image' => $matchedExit->exit_image ? asset($matchedExit->exit_image) : null,
+                    'match' => true,
+                    'already_out' => true,
+                    'message' => 'Biển số khớp: ' . $matchedExit->exit_plate_number,
+                ];
+            }
         }
 
         return response()->json([
             'success' => true,
             'last_entry' => $entryPayload,
             'pending_validation' => $pendingPayload,
+            'matched_exit' => $matchedPayload,
             'armed_exit_code' => $this->readArmedExitCode(),
             'entry_alert' => $this->readEntryAlert(),
+            'hold_scan' => $this->isScanHoldActive(),
             'live_preview' => [
                 // Không nhúng frame ở đây — LIVE dùng /api/live-status riêng
                 'entry' => $this->readLivePreview('entry', 0, false),
@@ -1029,12 +1403,15 @@ class ApiController extends Controller
             }
         }
 
-        if (!is_string($bin) || strlen($bin) < 200) {
+        $phase = $this->normalizeScanPhase($request->input('phase', $request->query('phase', '')));
+        $hasImage = is_string($bin) && strlen($bin) >= 200;
+
+        if (!$hasImage && $phase === '') {
             return response()->json(['success' => false, 'message' => 'Thiếu ảnh'], 422);
         }
 
         // Giới hạn ~180KB — LIVE chỉ cần khung nhỏ
-        if (strlen($bin) > 180000) {
+        if ($hasImage && strlen($bin) > 180000) {
             return response()->json(['success' => false, 'message' => 'Frame quá lớn'], 413);
         }
 
@@ -1059,32 +1436,52 @@ class ApiController extends Controller
         $fullPath = $dir . DIRECTORY_SEPARATOR . $filename;
         $tmpPath = $dir . DIRECTORY_SEPARATOR . $side . '.uploading.jpg';
         $metaPath = $dir . DIRECTORY_SEPARATOR . $side . '.json';
+        $meta = $this->readLiveMetaFile($metaPath);
+        $meta['user_id'] = $uid;
 
-        // Ghi file tạm rồi rename — tránh đọc ảnh nửa chừng
-        if (is_file($tmpPath)) {
-            @unlink($tmpPath);
-        }
-        if (@file_put_contents($tmpPath, $bin, LOCK_EX) === false) {
-            return response()->json(['success' => false, 'message' => 'Không ghi được frame'], 500);
-        }
-        if (is_file($fullPath)) {
-            @unlink($fullPath);
-        }
-        if (!@rename($tmpPath, $fullPath)) {
-            @copy($tmpPath, $fullPath);
-            @unlink($tmpPath);
+        $ts = (int) ($meta['ts'] ?? 0);
+
+        if ($hasImage) {
+            // Ghi file tạm rồi rename — tránh đọc ảnh nửa chừng
+            if (is_file($tmpPath)) {
+                @unlink($tmpPath);
+            }
+            if (@file_put_contents($tmpPath, $bin, LOCK_EX) === false) {
+                return response()->json(['success' => false, 'message' => 'Không ghi được frame'], 500);
+            }
+            if (is_file($fullPath)) {
+                @unlink($fullPath);
+            }
+            if (!@rename($tmpPath, $fullPath)) {
+                @copy($tmpPath, $fullPath);
+                @unlink($tmpPath);
+            }
+
+            // Timestamp ms (Windows filemtime chỉ ~1s → LIVE bị giật/lag)
+            $ts = (int) round(microtime(true) * 1000);
+            $meta['ts'] = $ts;
         }
 
-        // Timestamp ms (Windows filemtime chỉ ~1s → LIVE bị giật/lag)
-        $ts = (int) round(microtime(true) * 1000);
-        @file_put_contents($metaPath, json_encode(['ts' => $ts, 'user_id' => $uid], JSON_UNESCAPED_SLASHES));
+        if ($phase !== '') {
+            $meta['scan_phase'] = $phase;
+            $meta['phase_ts'] = (int) round(microtime(true) * 1000);
+        }
 
-        $url = '/public/uploads/live/' . $uid . '/' . $filename . '?t=' . $ts;
+        @file_put_contents($metaPath, json_encode($meta, JSON_UNESCAPED_SLASHES));
+
+        $url = $ts
+            ? ('/public/uploads/live/' . $uid . '/' . $filename . '?t=' . $ts)
+            : null;
+        $pauseOcr = $this->readManualOcrPauseRemaining();
         return response()->json([
             'success' => true,
             'side' => $side,
             'url' => $url,
-            'ts' => $ts,
+            'ts' => $ts ?: null,
+            'scan_phase' => $meta['scan_phase'] ?? 'detect',
+            'pause_ocr' => $pauseOcr > 0,
+            'pause_ocr_s' => $pauseOcr,
+            'hold_scan' => $this->isScanHoldActive(),
         ]);
     }
 
@@ -1100,6 +1497,7 @@ class ApiController extends Controller
 
         return response()->json([
             'success' => true,
+            'hold_scan' => $this->isScanHoldActive(),
             'live_preview' => [
                 'entry' => $this->readLivePreview('entry', $sinceEntry),
                 'exit' => $this->readLivePreview('exit', $sinceExit),
@@ -1118,18 +1516,16 @@ class ApiController extends Controller
         $metaPath = $dir . DIRECTORY_SEPARATOR . $side . '.json';
 
         if (!is_file($fullPath)) {
-            return ['active' => false, 'url' => null, 'ts' => null, 'frame' => null];
+            return ['active' => false, 'url' => null, 'ts' => null, 'frame' => null, 'scan_phase' => null];
         }
 
         clearstatcache(true, $fullPath);
         clearstatcache(true, $metaPath);
 
         $ts = null;
-        if (is_file($metaPath)) {
-            $meta = json_decode((string) @file_get_contents($metaPath), true);
-            if (is_array($meta) && isset($meta['ts'])) {
-                $ts = (int) $meta['ts'];
-            }
+        $meta = $this->readLiveMetaFile($metaPath);
+        if (isset($meta['ts'])) {
+            $ts = (int) $meta['ts'];
         }
         if (!$ts) {
             // Fallback cũ: giây → nhân 1000
@@ -1145,6 +1541,7 @@ class ApiController extends Controller
             'url' => $active ? ('/public/uploads/live/' . $uid . '/' . $side . '.jpg?t=' . $ts) : null,
             'ts' => $ts,
             'frame' => null,
+            'scan_phase' => $this->liveScanPhaseFromMeta($meta),
         ];
 
         // Chỉ đính frame khi monitor chưa có bản này — bỏ HTTP tải ảnh lần 2
@@ -1221,8 +1618,8 @@ class ApiController extends Controller
         }
 
         $age = time() - (int) ($data['ts'] ?? 0);
-        // Chỉ hiện trên PC trong ~60s sau khi phát sinh
-        if ($age > 60) {
+        // Chỉ hiện trên PC trong ~60s — trừ khi đang chờ bấm Đồng ý (giữ đến khi ack)
+        if ($age > 60 && !$this->isScanHoldActive()) {
             $path = $this->entryAlertPath();
             if (is_file($path)) {
                 @unlink($path);

@@ -50,6 +50,10 @@
                         </div>
                     </div>
 
+                    <button type="button" id="btn-manual-entry" class="btn btn-primary w-100 fw-bold shadow-sm mb-2" disabled title="Chỉ bấm được khi camera đang kết nối">
+                        <i class="material-icons-outlined align-middle me-1">check_circle</i> Xác nhận
+                    </button>
+
                     <div id="entry-result" class="mt-2" style="display: none;">
                         <div class="alert alert-success border-0 shadow-sm mb-0 p-2">
                             <h6 class="alert-heading fw-bold mb-1"><i class="material-icons-outlined align-middle">check_circle</i> Nhận diện thành công!</h6>
@@ -129,6 +133,10 @@
                     <small id="exit-code-arm-hint" class="text-muted d-block mb-2" style="font-size: 13px;">
                         Nhập mã 6 ký tự để ĐT bắt đầu quét
                     </small>
+
+                    <button type="button" id="btn-manual-exit" class="btn btn-danger w-100 fw-bold shadow-sm mb-2" disabled title="Chỉ bấm được khi camera đang kết nối">
+                        <i class="material-icons-outlined align-middle me-1">check_circle</i> Xác nhận
+                    </button>
 
                     <div id="exit-result" class="mt-2" style="display: none;">
                         <div class="alert mb-0 shadow-sm p-2 text-center" id="exit-alert-box">
@@ -231,7 +239,7 @@
                     <div id="statusModalIcon" class="mb-3"></div>
                     <h4 class="fw-bold mb-3" id="statusModalTitle"></h4>
                     <p class="fs-5 text-secondary mb-4" id="statusModalMessage"></p>
-                    <button type="button" class="btn btn-primary btn-lg px-5 fw-bold shadow" data-bs-dismiss="modal">Đồng ý</button>
+                    <button type="button" id="statusModalOkBtn" class="btn btn-primary btn-lg px-5 fw-bold shadow" data-bs-dismiss="modal">Đồng ý</button>
                 </div>
             </div>
         </div>
@@ -254,7 +262,11 @@ $(document).ready(function() {
         armExit: @json(route('api.arm_exit_code', [], false)),
         clearExit: @json(route('api.clear_exit_code', [], false)),
         retryExit: @json(route('api.retry_exit', [], false)),
-        validate: @json(route('api.validate_checkout', [], false))
+        validate: @json(route('api.validate_checkout', [], false)),
+        manualEntry: @json(route('api.manual_confirm_entry', [], false)),
+        manualExit: @json(route('api.manual_confirm_exit', [], false)),
+        scanCooldown: @json(route('api.scan_cooldown', [], false)),
+        scanHoldAck: @json(route('api.scan_hold_ack', [], false))
     };
 
     const MONITOR_POLL_MS = 1500;
@@ -269,6 +281,7 @@ $(document).ready(function() {
     };
     const isPhone = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
         || (navigator.maxTouchPoints > 1 && window.innerWidth < 900);
+    const UNRECOGNIZED_PLATE = 'không thể nhận diện';
 
     let entryTimerInterval = null;
     let exitTimerInterval = null;
@@ -283,6 +296,9 @@ $(document).ready(function() {
     let entryShowingResult = false;
     let exitLockedByPending = false;
     let liveObjectUrls = { entry: null, exit: null };
+    let manualBusy = { entry: false, exit: false };
+    let manualConfirmHidden = { entry: false, exit: false };
+    let scanPhase = { entry: '', exit: '' };
     const rtcState = {
         entry: { pc: null, session: null, after: 0, connected: false, pollTimer: null },
         exit: { pc: null, session: null, after: 0, connected: false, pollTimer: null }
@@ -356,6 +372,7 @@ $(document).ready(function() {
             // Soft off: không xóa srcObject (disconnected tạm lúc OCR sẽ tự connected lại)
             badgeText.text('LIVE ĐT');
         }
+        if (typeof syncManualConfirmBtn === 'function') syncManualConfirmBtn(side);
     }
 
     function hardClearRtcVideo(side) {
@@ -377,6 +394,42 @@ $(document).ready(function() {
             }
         }
         return false;
+    }
+
+    function isCameraLive(side) {
+        if (isRtcPrefer(side)) return true;
+        const ts = side === 'exit' ? lastLiveExitTs : lastLiveEntryTs;
+        if (ts > 0) return true;
+        const video = document.getElementById(side + '-live-video');
+        if (video && video.srcObject && video.videoWidth > 8) return true;
+        const img = document.getElementById(side + '-camera');
+        if (img && $(img).is(':visible') && img.src && img.naturalWidth > 8) return true;
+        return false;
+    }
+
+    function syncManualConfirmBtn(side) {
+        const btn = $('#btn-manual-' + side);
+        if (!btn.length) return;
+        if (manualConfirmHidden[side]) {
+            btn.hide();
+            return;
+        }
+        btn.show();
+        if (manualBusy[side]) {
+            btn.prop('disabled', true);
+            return;
+        }
+        const live = isCameraLive(side);
+        const reading = (scanPhase[side] === 'ocr' || scanPhase[side] === 'saving');
+        const canClick = live && !reading;
+        btn.prop('disabled', !canClick);
+        if (!live) {
+            btn.attr('title', 'Chỉ bấm được khi camera đang kết nối');
+        } else if (reading) {
+            btn.attr('title', 'Đang đọc ký tự biển số — tạm khóa xác nhận');
+        } else {
+            btn.attr('title', '');
+        }
     }
 
     function stopRtcSide(side) {
@@ -517,7 +570,10 @@ $(document).ready(function() {
         });
     }
 
-    function showNotificationModal(isSuccess, title, message) {
+    let insideAlertPending = false;
+
+    function showNotificationModal(isSuccess, title, message, opts) {
+        opts = opts || {};
         if (isSuccess) {
             $('#statusModalIcon').html('<i class="material-icons-outlined text-success" style="font-size: 80px;">check_circle</i>');
             $('#statusModalTitle').removeClass('text-danger').addClass('text-success').text(title);
@@ -526,7 +582,14 @@ $(document).ready(function() {
             $('#statusModalTitle').removeClass('text-success').addClass('text-danger').text(title);
         }
         $('#statusModalMessage').text(message);
-        new bootstrap.Modal(document.getElementById('statusNotificationModal')).show();
+        const el = document.getElementById('statusNotificationModal');
+        const existing = bootstrap.Modal.getInstance(el);
+        if (existing) existing.dispose();
+        const modal = new bootstrap.Modal(el, {
+            backdrop: opts.requireAck ? 'static' : true,
+            keyboard: !opts.requireAck
+        });
+        modal.show();
     }
 
     let lastArmedCode = '';
@@ -709,9 +772,25 @@ $(document).ready(function() {
         }
     }
 
+    function applyScanPhaseFromLive(side, live) {
+        const jpegOn = !!(live && live.active);
+        const rtcOn = isRtcPrefer(side);
+        if ((jpegOn || rtcOn) && live && live.scan_phase) {
+            scanPhase[side] = String(live.scan_phase);
+            return;
+        }
+        if (!jpegOn && !rtcOn) {
+            scanPhase[side] = '';
+        }
+    }
+
     function applyLivePreview(live) {
+        applyScanPhaseFromLive('entry', live && live.entry);
+        applyScanPhaseFromLive('exit', live && live.exit);
         setLiveFrame('entry', live && live.entry);
         setLiveFrame('exit', live && live.exit);
+        syncManualConfirmBtn('entry');
+        syncManualConfirmBtn('exit');
     }
 
     function pollLive() {
@@ -773,6 +852,9 @@ $(document).ready(function() {
         // Ẩn kết quả cột camera + xóa ảnh Đối chiếu xe vào (không đụng Đối chiếu xe ra)
         $('#entry-result, #entry-error').fadeOut();
         clearEntryCompare();
+        manualConfirmHidden.entry = false;
+        setManualBtnBusy('entry', false);
+        syncManualConfirmBtn('entry');
     }
 
     function resetExitAndComparison(opts) {
@@ -790,13 +872,15 @@ $(document).ready(function() {
         $('#btn-exit-retry-inline').hide();
         clearExitCompare();
         currentLogId = null;
-        lastSeenPendingId = null;
         lastArmedCode = '';
         lastArmFailedCode = '';
         lastArmConflictCode = '';
         if (typeof stopConflictRetry === 'function') stopConflictRetry();
         $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
             .text(opts.keepCode ? 'Nhập đủ 6 ký tự hoặc sửa mã rồi thử lại' : 'Nhập mã 6 ký tự để ĐT bắt đầu quét');
+        manualConfirmHidden.exit = false;
+        setManualBtnBusy('exit', false);
+        syncManualConfirmBtn('exit');
         if (opts.focusCode) {
             const input = $('#exit-code')[0];
             if (input) {
@@ -809,29 +893,23 @@ $(document).ready(function() {
     function autoApproveExit(logId) {
         if (!logId || autoExitInProgress) return;
         autoExitInProgress = true;
-        $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
-            .text('Đang xác nhận cho ra...');
         $.post(API.validate, { log_id: logId, is_valid: true })
             .done(function(res) {
                 if (res && res.success) {
-                    $('#exit-auto-timer-wrap').addClass('d-none');
-                    $('#exit-alert-icon').text('check_circle');
-                    $('#exit-message').html('Đã cho phép xe ra!');
-                    $('#comp-status-badge').text('Đã cho ra thành công');
-                    setTimeout(function() {
-                        resetExitAndComparison();
-                    }, 1500);
-                } else {
-                    autoExitInProgress = false;
-                    $('#exit-auto-timer-wrap').addClass('d-none');
-                    $('#validation-buttons').show();
-                    $('#comp-status-badge').removeClass('bg-success').addClass('bg-danger text-white')
-                        .text('Tự động cho ra thất bại — xác nhận thủ công');
-                    showNotificationModal(false, 'Không cho ra được', (res && res.message) || 'Vui lòng bấm Hợp lệ / Không hợp lệ.');
+                    // DB đã in → out ngay; giao diện vẫn đếm 10s
+                    return;
                 }
+                autoExitInProgress = false;
+                clearExitTimer();
+                $('#exit-auto-timer-wrap').addClass('d-none');
+                $('#validation-buttons').show();
+                $('#comp-status-badge').removeClass('bg-success').addClass('bg-danger text-white')
+                    .text('Tự động cho ra thất bại — xác nhận thủ công');
+                showNotificationModal(false, 'Không cho ra được', (res && res.message) || 'Vui lòng bấm Hợp lệ / Không hợp lệ.');
             })
             .fail(function(xhr) {
                 autoExitInProgress = false;
+                clearExitTimer();
                 $('#exit-auto-timer-wrap').addClass('d-none');
                 $('#validation-buttons').show();
                 const msg = (xhr.responseJSON && xhr.responseJSON.message) || 'Lỗi kết nối khi tự động cho ra.';
@@ -853,12 +931,14 @@ $(document).ready(function() {
     function showEntrySuccess(plate, code, imageUrl) {
         entryShowingResult = false;
         $('#entry-error').hide();
-        // Chỉ cập nhật nửa trên "Đối chiếu Hình ảnh xe vào" — không đụng nửa dưới xe ra
+        manualConfirmHidden.entry = true;
+        $('#btn-manual-entry').hide();
         setEntryCompare(plate, imageUrl, 'Xe vào OK');
 
         $('#res-plate').text(plate || '');
         $('#res-code').text(code || '');
         $('#entry-result').fadeIn();
+        $.post(API.scanCooldown, { seconds: 10 });
         if (entryTimerInterval) clearInterval(entryTimerInterval);
         let seconds = 10;
         $('#entry-timer').text(seconds);
@@ -878,6 +958,8 @@ $(document).ready(function() {
         if (entryTimerInterval) clearInterval(entryTimerInterval);
         entryShowingResult = false;
         $('#entry-result').hide();
+        manualConfirmHidden.entry = true;
+        $('#btn-manual-entry').hide();
 
         // Cảnh báo xe trong bãi → nửa trên đối chiếu xe vào (không đè nửa dưới)
         setEntryCompare(alert.plate_number, alert.entry_image || null, 'Xe vẫn trong bãi');
@@ -890,15 +972,10 @@ $(document).ready(function() {
         $('#entry-error-msg').text(alert.message || 'Xe này chưa ra khỏi bãi — không thể nhận diện vào lần nữa.');
         $('#entry-error').show();
 
+        insideAlertPending = true;
         if (opts.modal !== false) {
-            showNotificationModal(false, 'Xe vẫn nằm trong bãi', alert.message || 'Xe này chưa ra khỏi bãi.');
+            showNotificationModal(false, 'Xe vẫn nằm trong bãi', alert.message || 'Xe này chưa ra khỏi bãi.', { requireAck: true });
         }
-
-        setTimeout(function() {
-            if ($('#entry-error').is(':visible')) {
-                resetEntryUi();
-            }
-        }, 12000);
     }
 
     function showPendingValidation(data) {
@@ -924,11 +1001,12 @@ $(document).ready(function() {
 
         const alertBox = $('#exit-alert-box');
         $('#btn-exit-retry-inline').hide();
+        manualConfirmHidden.exit = true;
+        $('#btn-manual-exit').hide();
         $('#exit-code').prop('disabled', true);
         $('#exit-result').show();
 
         if (data.match) {
-            // Biển khớp → đếm giây rồi tự động cho ra (giống làm mới sau xe vào)
             alertBox.removeClass('alert-danger alert-info').addClass('alert-success');
             $('#exit-alert-icon').text('check_circle');
             $('#exit-message').html(
@@ -940,13 +1018,22 @@ $(document).ready(function() {
             $('#exit-auto-timer-wrap').removeClass('d-none');
             $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
                 .text('Biển khớp — tự động cho ra sau ' + seconds + 's');
+            if (!data.already_out) {
+                autoApproveExit(data.log_id);
+            }
             exitTimerInterval = setInterval(function() {
                 seconds--;
                 $('#exit-auto-timer').text(seconds);
                 $('#comp-status-badge').text('Biển khớp — tự động cho ra sau ' + seconds + 's');
                 if (seconds <= 0) {
                     clearExitTimer();
-                    autoApproveExit(data.log_id);
+                    $('#exit-auto-timer-wrap').addClass('d-none');
+                    $('#exit-alert-icon').text('check_circle');
+                    $('#exit-message').html('Đã cho phép xe ra!');
+                    $('#comp-status-badge').text('Đã cho ra thành công');
+                    setTimeout(function() {
+                        resetExitAndComparison();
+                    }, 1500);
                 }
             }, 1000);
         } else {
@@ -997,13 +1084,14 @@ $(document).ready(function() {
                     // Đánh dấu pending đang hủy để poll sau không hiện lại (kể cả khi API chậm)
                     const dismissedPendingId = (res.pending_validation && res.pending_validation.log_id)
                         ? res.pending_validation.log_id
-                        : null;
+                        : ((res.matched_exit && res.matched_exit.log_id) ? res.matched_exit.log_id : null);
                     lastSeenPendingId = dismissedPendingId;
 
                     currentLogId = null;
                     exitLockedByPending = false;
                     clearExitTimer();
                     autoExitInProgress = false;
+                    insideAlertPending = false;
                     $('#exit-result').hide();
                     $('#exit-code').prop('disabled', false).val('');
                     clearEntryCompare();
@@ -1014,7 +1102,8 @@ $(document).ready(function() {
                     $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
                         .text('Nhập mã 6 ký tự để ĐT bắt đầu quét');
 
-                    const clearJobs = [$.post(API.retryExit, {})];
+                    // F5 = Đồng ý: tắt cảnh báo xe trong bãi + cho ĐT quét lại
+                    const clearJobs = [$.post(API.retryExit, {}), $.post(API.scanHoldAck)];
                     if (res.armed_exit_code) {
                         clearJobs.push($.post(API.clearExit));
                     }
@@ -1040,7 +1129,8 @@ $(document).ready(function() {
                     }
                 }
 
-                const pending = res.pending_validation;
+                const pending = res.pending_validation
+                    || (res.matched_exit && res.matched_exit.log_id ? res.matched_exit : null);
                 if (pending && pending.log_id) {
                     // Lượt mới → hiện đối chiếu. Cùng lượt đang chờ mà UI bị lệch → đồng bộ lại (không để xe vào đè mất)
                     if (pending.log_id !== lastSeenPendingId) {
@@ -1052,10 +1142,13 @@ $(document).ready(function() {
                         showPendingValidation(pending);
                     }
                 } else if (lastSeenPendingId && !pending) {
-                    if (currentLogId === lastSeenPendingId) {
-                        resetExitAndComparison();
+                    const holdingMatchCountdown = !!(exitTimerInterval || $('#exit-auto-timer-wrap').is(':visible'));
+                    if (!holdingMatchCountdown) {
+                        if (currentLogId === lastSeenPendingId) {
+                            resetExitAndComparison();
+                        }
+                        lastSeenPendingId = null;
                     }
-                    lastSeenPendingId = null;
                 }
 
                 // Nếu mã còn trên ô nhập mà server mất kích hoạt (lỗi/hết hạn) → kích hoạt lại để ĐT quét tiếp
@@ -1101,6 +1194,148 @@ $(document).ready(function() {
         doRetryExit(false);
     });
 
+    function manualBtnHtml(side) {
+        return '<i class="material-icons-outlined align-middle me-1">check_circle</i> Xác nhận';
+    }
+
+    function setManualBtnBusy(side, busy) {
+        manualBusy[side] = !!busy;
+        const btn = $('#btn-manual-' + side);
+        if (busy) {
+            btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span> Đang chụp...');
+        } else {
+            btn.html(manualBtnHtml(side));
+            syncManualConfirmBtn(side);
+        }
+    }
+
+    function captureSideBlob(side) {
+        return new Promise(function(resolve) {
+            const video = document.getElementById(side + '-live-video');
+            const img = document.getElementById(side + '-camera');
+            const canvas = document.createElement('canvas');
+            const maxW = 1280;
+
+            function toBlob() {
+                if (!canvas.width || !canvas.height) {
+                    resolve(null);
+                    return;
+                }
+                canvas.toBlob(function(b) {
+                    resolve(b && b.size > 400 ? b : null);
+                }, 'image/jpeg', 0.9);
+            }
+
+            function fit(w, h) {
+                if (w > maxW) {
+                    h = Math.round(h * (maxW / w));
+                    w = maxW;
+                }
+                return { w: w, h: h };
+            }
+
+            if (video && video.srcObject && video.videoWidth > 8) {
+                const s = fit(video.videoWidth, video.videoHeight);
+                canvas.width = s.w;
+                canvas.height = s.h;
+                canvas.getContext('2d').drawImage(video, 0, 0, s.w, s.h);
+                toBlob();
+                return;
+            }
+
+            if (img && img.src && img.naturalWidth > 8 && $(img).is(':visible')) {
+                const s = fit(img.naturalWidth, img.naturalHeight);
+                canvas.width = s.w;
+                canvas.height = s.h;
+                try {
+                    canvas.getContext('2d').drawImage(img, 0, 0, s.w, s.h);
+                    toBlob();
+                } catch (e) {
+                    resolve(null);
+                }
+                return;
+            }
+
+            resolve(null);
+        });
+    }
+
+    function postManualConfirm(side, blob) {
+        const fd = new FormData();
+        if (blob) {
+            fd.append('image', blob, side + '_capture.jpg');
+        }
+        if (side === 'exit') {
+            fd.append('code', ($('#exit-code').val() || '').trim().toUpperCase());
+        }
+        return $.ajax({
+            url: side === 'exit' ? API.manualExit : API.manualEntry,
+            type: 'POST',
+            data: fd,
+            processData: false,
+            contentType: false,
+            timeout: 20000
+        });
+    }
+
+    function onManualConfirm(side) {
+        const btn = $('#btn-manual-' + side);
+        if (btn.prop('disabled') || !btn.is(':visible') || !isCameraLive(side)) return;
+        if (scanPhase[side] === 'ocr' || scanPhase[side] === 'saving') return;
+        if (side === 'exit') {
+            const code = ($('#exit-code').val() || '').trim().toUpperCase();
+            if (code.length !== 6) {
+                showNotificationModal(false, 'Thiếu mã code', 'Vui lòng nhập mã code 6 ký tự trước khi xác nhận xe ra.');
+                return;
+            }
+        }
+
+        setManualBtnBusy(side, true);
+        captureSideBlob(side).then(function(blob) {
+            return postManualConfirm(side, blob);
+        }).then(function(res) {
+            if (!res || !res.success) {
+                setManualBtnBusy(side, false);
+                showNotificationModal(false, 'Xác nhận thất bại', (res && res.message) || 'Không chụp được ảnh.');
+                return;
+            }
+
+            if (side === 'entry') {
+                if (res.log_id) lastSeenEntryId = res.log_id;
+                showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url);
+            } else {
+                showPendingValidation(res);
+            }
+        }).catch(function(err) {
+            setManualBtnBusy(side, false);
+            const msg = (err && err.responseJSON && err.responseJSON.message)
+                || (err && err.statusText)
+                || 'Lỗi kết nối khi xác nhận.';
+            showNotificationModal(false, 'Xác nhận thất bại', msg);
+        });
+    }
+
+    $('#btn-manual-entry').click(function() {
+        onManualConfirm('entry');
+    });
+    $('#btn-manual-exit').click(function() {
+        onManualConfirm('exit');
+    });
+
+    function ackInsideAlertAndReset() {
+        if (!insideAlertPending) return;
+        insideAlertPending = false;
+        $.post(API.scanHoldAck);
+        resetEntryUi();
+    }
+
+    $('#statusModalOkBtn').on('click', function() {
+        ackInsideAlertAndReset();
+    });
+    $('#statusNotificationModal').on('hidden.bs.modal', function() {
+        ackInsideAlertAndReset();
+    });
+
     let pendingValidationAction = null;
     const confirmModalObj = new bootstrap.Modal(document.getElementById('confirmValidationModal'));
     $('#btn-valid').click(function() {
@@ -1141,6 +1376,8 @@ $(document).ready(function() {
         });
     });
 
+    syncManualConfirmBtn('entry');
+    syncManualConfirmBtn('exit');
     pollLive();
     pollRtcSide('entry');
     pollRtcSide('exit');

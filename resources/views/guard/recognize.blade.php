@@ -174,7 +174,7 @@
                     <div id="statusModalIcon" class="mb-3"></div>
                     <h4 class="fw-bold mb-3" id="statusModalTitle"></h4>
                     <p class="fs-5 text-secondary mb-4" id="statusModalMessage"></p>
-                    <button type="button" class="btn btn-primary btn-lg px-5 fw-bold shadow" data-bs-dismiss="modal">Đồng ý</button>
+                    <button type="button" id="statusModalOkBtn" class="btn btn-primary btn-lg px-5 fw-bold shadow" data-bs-dismiss="modal">Đồng ý</button>
                 </div>
             </div>
         </div>
@@ -193,7 +193,8 @@ $(document).ready(function() {
         retryExit: @json(route('api.retry_exit', [], false)),
         entry: @json(route('api.recognize_entry', [], false)),
         exit: @json(route('api.checkout_exit', [], false)),
-        validate: @json(route('api.validate_checkout', [], false))
+        validate: @json(route('api.validate_checkout', [], false)),
+        scanHoldAck: @json(route('api.scan_hold_ack', [], false))
     };
 
     let entryTimerInterval = null;
@@ -208,6 +209,7 @@ $(document).ready(function() {
         const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
         if (nav && nav.type === 'reload') {
             $.post(API.retryExit, {});
+            $.post(API.scanHoldAck);
         }
     } catch (e) {}
 
@@ -218,7 +220,10 @@ $(document).ready(function() {
         }
     }
 
-    function showNotificationModal(isSuccess, title, message) {
+    let insideAlertPending = false;
+
+    function showNotificationModal(isSuccess, title, message, opts) {
+        opts = opts || {};
         if (isSuccess) {
             $('#statusModalIcon').html('<i class="material-icons-outlined text-success" style="font-size: 80px;">check_circle</i>');
             $('#statusModalTitle').removeClass('text-danger').addClass('text-success').text(title);
@@ -227,7 +232,14 @@ $(document).ready(function() {
             $('#statusModalTitle').removeClass('text-success').addClass('text-danger').text(title);
         }
         $('#statusModalMessage').text(message);
-        new bootstrap.Modal(document.getElementById('statusNotificationModal')).show();
+        const el = document.getElementById('statusNotificationModal');
+        const existing = bootstrap.Modal.getInstance(el);
+        if (existing) existing.dispose();
+        const modal = new bootstrap.Modal(el, {
+            backdrop: opts.requireAck ? 'static' : true,
+            keyboard: !opts.requireAck
+        });
+        modal.show();
     }
 
     function resetEntryUi() {
@@ -267,28 +279,23 @@ $(document).ready(function() {
     function autoApproveExit(logId) {
         if (!logId || autoExitInProgress) return;
         autoExitInProgress = true;
-        $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
-            .text('Đang xác nhận cho ra...');
         $.post(API.validate, { log_id: logId, is_valid: true })
             .done(function(res) {
                 if (res && res.success) {
-                    $('#exit-auto-timer-wrap').addClass('d-none');
-                    $('#exit-message').html(
-                        '<i class="material-icons-outlined align-middle me-1">check_circle</i> Đã cho phép xe ra!'
-                    );
-                    $('#comp-status-badge').text('Đã cho ra thành công');
-                    setTimeout(resetExitAndComparison, 1500);
-                } else {
-                    autoExitInProgress = false;
-                    $('#exit-auto-timer-wrap').addClass('d-none');
-                    $('#validation-buttons').show();
-                    $('#comp-status-badge').removeClass('bg-success').addClass('bg-danger text-white')
-                        .text('Tự động cho ra thất bại — xác nhận thủ công');
-                    showNotificationModal(false, 'Không cho ra được', (res && res.message) || 'Vui lòng bấm Hợp lệ / Không hợp lệ.');
+                    // DB đã in → out ngay; giao diện vẫn đếm 10s
+                    return;
                 }
+                autoExitInProgress = false;
+                clearExitTimer();
+                $('#exit-auto-timer-wrap').addClass('d-none');
+                $('#validation-buttons').show();
+                $('#comp-status-badge').removeClass('bg-success').addClass('bg-danger text-white')
+                    .text('Tự động cho ra thất bại — xác nhận thủ công');
+                showNotificationModal(false, 'Không cho ra được', (res && res.message) || 'Vui lòng bấm Hợp lệ / Không hợp lệ.');
             })
             .fail(function(xhr) {
                 autoExitInProgress = false;
+                clearExitTimer();
                 $('#exit-auto-timer-wrap').addClass('d-none');
                 $('#validation-buttons').show();
                 const msg = (xhr.responseJSON && xhr.responseJSON.message) || 'Lỗi kết nối khi tự động cho ra.';
@@ -333,10 +340,9 @@ $(document).ready(function() {
         $('#entry-error-title').text('Xe vẫn nằm trong bãi');
         $('#entry-error-msg').text(alert.message || 'Xe này chưa ra khỏi bãi — không thể nhận diện vào lần nữa.');
         $('#entry-error').show();
-        showNotificationModal(false, 'Xe vẫn nằm trong bãi', alert.message || 'Xe này chưa ra khỏi bãi.');
-        setTimeout(function() {
-            if ($('#entry-error').is(':visible')) resetEntryUi();
-        }, 12000);
+        insideAlertPending = true;
+        $('#entry-file, #btn-entry-recognize').prop('disabled', true);
+        showNotificationModal(false, 'Xe vẫn nằm trong bãi', alert.message || 'Xe này chưa ra khỏi bãi.', { requireAck: true });
     }
 
     function setExitControlsEnabled(enabled) {
@@ -368,7 +374,6 @@ $(document).ready(function() {
         $('#exit-result').show();
 
         if (data.match) {
-            // Nhận diện đúng → khóa upload / mã / nút
             exitLocked = true;
             setExitControlsEnabled(false);
             alertBox.removeClass('alert-danger alert-info').addClass('alert-success');
@@ -382,13 +387,21 @@ $(document).ready(function() {
             $('#exit-auto-timer-wrap').removeClass('d-none');
             $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
                 .text('Biển khớp — tự động cho ra sau ' + seconds + 's');
+            if (!data.already_out) {
+                autoApproveExit(data.log_id);
+            }
             exitTimerInterval = setInterval(function() {
                 seconds--;
                 $('#exit-auto-timer').text(seconds);
                 $('#comp-status-badge').text('Biển khớp — tự động cho ra sau ' + seconds + 's');
                 if (seconds <= 0) {
                     clearExitTimer();
-                    autoApproveExit(data.log_id);
+                    $('#exit-auto-timer-wrap').addClass('d-none');
+                    $('#exit-message').html(
+                        '<i class="material-icons-outlined align-middle me-1">check_circle</i> Đã cho phép xe ra!'
+                    );
+                    $('#comp-status-badge').text('Đã cho ra thành công');
+                    setTimeout(resetExitAndComparison, 1500);
                 }
             }, 1000);
         } else {
@@ -541,6 +554,13 @@ $(document).ready(function() {
             $('#entry-camera').attr('src', e.target.result).show();
         };
         reader.readAsDataURL(file);
+    });
+
+    $('#statusModalOkBtn').on('click', function() {
+        if (!insideAlertPending) return;
+        insideAlertPending = false;
+        $.post(API.scanHoldAck);
+        resetEntryUi();
     });
 
     $('#exit-file').change(function() {

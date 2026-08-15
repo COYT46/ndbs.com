@@ -69,7 +69,8 @@ $(document).ready(function() {
         detect: @json(route('api.detect_preview', [], false)),
         preview: @json(route('api.recognize_preview', [], false)),
         entry: @json(route('api.recognize_entry', [], false)),
-        exit: @json(route('api.checkout_exit', [], false))
+        exit: @json(route('api.checkout_exit', [], false)),
+        scanHold: @json(route('api.scan_hold', [], false))
     };
 
     let stream = null;
@@ -77,6 +78,7 @@ $(document).ready(function() {
     let liveTimer = null;
     let armedPollTimer = null;
     let rtcPollTimer = null;
+    let holdPollTimer = null;
     let scanning = false;
     let busy = false;
     let livePushing = false;
@@ -93,7 +95,12 @@ $(document).ready(function() {
     let rtcConnected = false;
     let armedCode = null;
     let cooldownUntil = 0;
+    let ocrPausedUntil = 0;
+    let currentScanPhase = 'detect';
+    let pauseTickTimer = null;
     let scanAttempt = 0;
+    let insideHold = false;
+    const FRONTEND_HOLD_S = 10;
     const CLAIM_RETRY_MS = 1000;
     const canvas = document.createElement('canvas');
     const liveCanvas = document.createElement('canvas');
@@ -117,6 +124,26 @@ $(document).ready(function() {
 
     function setStatus(text) {
         $('#scan-status').text(text);
+    }
+
+    function setScanPhase(phase) {
+        phase = phase || 'detect';
+        if (currentScanPhase === phase) return;
+        currentScanPhase = phase;
+        if (!stream || liveBlocked) return;
+        fetch(API.livePreview
+            + '?side=' + encodeURIComponent(SIDE)
+            + '&device_id=' + encodeURIComponent(DEVICE_ID)
+            + '&phase=' + encodeURIComponent(phase), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-Live-Device-Id': DEVICE_ID
+            }
+        }).catch(function() {});
     }
 
     function showResult(ok, html) {
@@ -252,6 +279,8 @@ $(document).ready(function() {
     }
 
     function canScanNow() {
+        if (insideHold) return false;
+        if (Date.now() < ocrPausedUntil) return false;
         return !!(stream && !busy && (!IS_EXIT || armedCode));
     }
 
@@ -268,6 +297,7 @@ $(document).ready(function() {
     }
 
     function liveDelay() {
+        if (insideHold) return 400;
         // Còn PC WebRTC (kể cả disconnected tạm) → JPEG chỉ heartbeat
         if (rtcConnected || (rtcPc && rtcPc.connectionState !== 'failed' && rtcPc.connectionState !== 'closed')) {
             return LIVE_PUSH_RTC_MS;
@@ -283,9 +313,11 @@ $(document).ready(function() {
         }
         if (!stream || liveBlocked) return;
 
-        // Đang OCR / RTC còn sống → không spam JPEG (tránh nghẽn Wi‑Fi làm rớt LIVE RTC)
+        // Đang detect/OCR + RTC còn sống → không spam JPEG (tránh nghẽn Wi‑Fi làm rớt LIVE RTC)
+        // Đang chờ đếm 10s trên PC (busy + ocrPausedUntil) → vẫn heartbeat để nhận pause_ocr_s
         const rtcAlive = !!(rtcPc && rtcPc.connectionState !== 'failed' && rtcPc.connectionState !== 'closed');
-        if (rtcAlive && (busy || scanning)) {
+        const holdingFrontend = busy && Date.now() < ocrPausedUntil;
+        if (rtcAlive && (scanning || (busy && !holdingFrontend && !insideHold))) {
             scheduleLivePush(LIVE_PUSH_RTC_MS);
             return;
         }
@@ -304,7 +336,8 @@ $(document).ready(function() {
                 if (!blob || !stream || liveBlocked) return null;
                 return fetch(API.livePreview
                     + '?side=' + encodeURIComponent(SIDE)
-                    + '&device_id=' + encodeURIComponent(DEVICE_ID), {
+                    + '&device_id=' + encodeURIComponent(DEVICE_ID)
+                    + '&phase=' + encodeURIComponent(currentScanPhase), {
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: {
@@ -324,6 +357,26 @@ $(document).ready(function() {
                     }
                     if (!r.ok) throw new Error('HTTP ' + r.status);
                     return r.json().catch(function() { return null; });
+                }).then(function(body) {
+                    if (body && body.hold_scan) {
+                        enterInsideHold();
+                    } else if (insideHold) {
+                        releaseInsideHold();
+                    } else if (body && Number(body.pause_ocr_s) > 0) {
+                        const until = Date.now() + (Number(body.pause_ocr_s) * 1000);
+                        if (until > ocrPausedUntil) ocrPausedUntil = until;
+                        scanning = false;
+                        if (scanTimer) {
+                            clearTimeout(scanTimer);
+                            scanTimer = null;
+                        }
+                        if (pauseTickTimer) {
+                            setScanPhase('detect');
+                        } else {
+                            holdForFrontendCountdown(Math.ceil((ocrPausedUntil - Date.now()) / 1000));
+                        }
+                    }
+                    return body;
                 });
             })
             .catch(function(err) {
@@ -573,10 +626,116 @@ $(document).ready(function() {
         scanTimer = setTimeout(runScan, typeof delay === 'number' ? delay : SCAN_MS);
     }
 
+    function clearPauseTick() {
+        if (pauseTickTimer) {
+            clearInterval(pauseTickTimer);
+            pauseTickTimer = null;
+        }
+    }
+
+    function holdForFrontendCountdown(seconds) {
+        clearPauseTick();
+        const holdS = Math.max(1, parseInt(seconds, 10) || FRONTEND_HOLD_S);
+        ocrPausedUntil = Math.max(ocrPausedUntil, Date.now() + holdS * 1000);
+        busy = true;
+        scanning = false;
+        if (scanTimer) {
+            clearTimeout(scanTimer);
+            scanTimer = null;
+        }
+        setScanPhase('detect');
+
+        function tick() {
+            const left = Math.ceil((ocrPausedUntil - Date.now()) / 1000);
+            if (left <= 0) {
+                clearPauseTick();
+                $('#scan-result').fadeOut();
+                setStatus(IS_EXIT
+                    ? 'Chờ quẹt mã (nhập trên máy tính)...'
+                    : 'LIVE → màn giám sát | Đang chờ biển số...');
+                resumeAfterAttempt(300);
+                return;
+            }
+            setStatus('Chờ máy tính đếm ' + left + 's rồi quét tiếp...');
+        }
+        tick();
+        pauseTickTimer = setInterval(tick, 250);
+    }
+
+    function enterInsideHold() {
+        if (insideHold) {
+            scheduleHoldPoll();
+            return;
+        }
+        insideHold = true;
+        busy = true;
+        scanning = false;
+        clearPauseTick();
+        if (scanTimer) {
+            clearTimeout(scanTimer);
+            scanTimer = null;
+        }
+        setScanPhase('detect');
+        setStatus('Xe vẫn trong bãi — chờ máy tính bấm Đồng ý...');
+        scheduleHoldPoll();
+    }
+
+    function scheduleHoldPoll() {
+        if (holdPollTimer) clearTimeout(holdPollTimer);
+        if (!insideHold) return;
+        holdPollTimer = setTimeout(pollScanHold, 400);
+    }
+
+    function pollScanHold() {
+        holdPollTimer = null;
+        if (!insideHold || !stream) return;
+        fetch(API.scanHold + '?t=' + Date.now(), {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        }).then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        }).then(function(res) {
+            if (insideHold && res && res.hold_scan === false) {
+                releaseInsideHold();
+                return;
+            }
+        }).catch(function() {
+            // ignore, poll lại
+        }).finally(function() {
+            if (insideHold) scheduleHoldPoll();
+        });
+    }
+
+    function releaseInsideHold() {
+        if (!insideHold) return;
+        insideHold = false;
+        if (holdPollTimer) {
+            clearTimeout(holdPollTimer);
+            holdPollTimer = null;
+        }
+        $('#scan-result').fadeOut();
+        setStatus(IS_EXIT
+            ? 'Chờ quẹt mã (nhập trên máy tính)...'
+            : 'LIVE → màn giám sát | Đang chờ biển số...');
+        resumeAfterAttempt(300);
+    }
+
     function resumeAfterAttempt(delay) {
+        if (insideHold) return;
+        if (Date.now() < ocrPausedUntil) {
+            holdForFrontendCountdown(Math.ceil((ocrPausedUntil - Date.now()) / 1000));
+            return;
+        }
+        clearPauseTick();
         busy = false;
         scanning = false;
         cooldownUntil = Date.now() + (delay || RETRY_MS);
+        setScanPhase('detect');
         ensureScanLoop(delay || RETRY_MS);
     }
 
@@ -633,6 +792,7 @@ $(document).ready(function() {
     function runScan() {
         scanTimer = null;
         if (!stream) return;
+        if (insideHold) return;
         if (busy) return;
         if (IS_EXIT && !armedCode) {
             setStatus('Chờ quẹt mã (nhập trên máy tính)...');
@@ -646,10 +806,17 @@ $(document).ready(function() {
             scheduleScan(Math.max(200, cooldownUntil - Date.now()));
             return;
         }
+        if (Date.now() < ocrPausedUntil) {
+            if (!pauseTickTimer) {
+                holdForFrontendCountdown(Math.ceil((ocrPausedUntil - Date.now()) / 1000));
+            }
+            return;
+        }
 
         scanning = true;
         const codeForThisScan = armedCode;
         scanAttempt += 1;
+        setScanPhase('detect');
         setStatus(IS_EXIT
             ? ('Mã ' + codeForThisScan + ' — đang tìm biển... #' + scanAttempt)
             : ('Đang tìm biển số... #' + scanAttempt));
@@ -678,6 +845,7 @@ $(document).ready(function() {
             }).done(function(det) {
                 if (!stream || busy) return;
                 if (!det || !det.detected) {
+                    setScanPhase('detect');
                     setStatus(IS_EXIT
                         ? ('Mã ' + (armedCode || codeForThisScan) + ' — chưa thấy biển (#' + scanAttempt + ')')
                         : ('Chưa thấy biển số (#' + scanAttempt + ')'));
@@ -686,6 +854,7 @@ $(document).ready(function() {
 
                 // Bước 2: đã chắc là biển → mới đọc ký tự
                 startedOcr = true;
+                setScanPhase('ocr');
                 setStatus(IS_EXIT
                     ? ('Mã ' + codeForThisScan + ' — thấy biển, đang đọc ký tự...')
                     : 'Thấy biển — đang đọc ký tự...');
@@ -703,6 +872,7 @@ $(document).ready(function() {
                     if (!stream || busy) return;
                     if (res && res.success && res.plate_number) {
                         const plate = String(res.plate_number).toUpperCase();
+                        setScanPhase('saving');
                         setStatus(plate + ' — đang lưu...');
                         busy = true;
                         scanning = false;
@@ -711,33 +881,39 @@ $(document).ready(function() {
                         return;
                     }
                     const why = (res && res.message) ? String(res.message) : 'chưa đọc được ký tự';
+                    setScanPhase('detect');
                     setStatus(IS_EXIT
                         ? ('Mã ' + (armedCode || codeForThisScan) + ' — ' + why)
                         : why);
                 }).fail(function(xhr) {
                     const st = xhr && xhr.status ? ('HTTP ' + xhr.status) : 'lỗi mạng';
+                    setScanPhase('detect');
                     setStatus(IS_EXIT
                         ? ('Mã ' + (armedCode || '') + ' — lỗi đọc ký tự ' + st)
                         : ('Lỗi đọc ký tự ' + st));
                 }).always(function() {
                     if (!busy) {
                         scanning = false;
+                        setScanPhase('detect');
                         ensureScanLoop(SCAN_MS);
                     }
                 });
             }).fail(function(xhr) {
                 const st = xhr && xhr.status ? ('HTTP ' + xhr.status) : 'lỗi mạng';
+                setScanPhase('detect');
                 setStatus(IS_EXIT
                     ? ('Mã ' + (armedCode || '') + ' — lỗi tìm biển ' + st)
                     : ('Lỗi tìm biển ' + st));
             }).always(function() {
                 if (!startedOcr && !busy) {
                     scanning = false;
+                    setScanPhase('detect');
                     ensureScanLoop(SCAN_MS);
                 }
             });
         }).catch(function() {
             scanning = false;
+            setScanPhase('detect');
             setStatus('Lỗi chụp frame — thử lại...');
             ensureScanLoop(500);
         });
@@ -758,21 +934,13 @@ $(document).ready(function() {
                     '<strong>Xe vào OK</strong><br>Biển: <b>' + (res.plate_number || plateHint) +
                     '</b><br>Mã code: <b class="text-primary">' + res.code + '</b>'
                 );
-                setStatus('Xong — chờ xe tiếp theo...');
-                setTimeout(function() {
-                    $('#scan-result').fadeOut();
-                    resumeAfterAttempt(1500);
-                }, 4000);
+                holdForFrontendCountdown(res.pause_ocr_s || FRONTEND_HOLD_S);
             } else if (res && res.already_inside) {
                 showResult(false,
                     '<strong>Xe vẫn trong bãi</strong><br>' +
                     (res.message || 'Biển này chưa ra khỏi bãi — không thể vào lại.')
                 );
-                setStatus('Xe vẫn trong bãi — chờ xe khác...');
-                setTimeout(function() {
-                    $('#scan-result').fadeOut();
-                    resumeAfterAttempt(2500);
-                }, 4500);
+                enterInsideHold();
             } else {
                 showResult(false, (res && res.message) || 'Nhận diện thất bại — sẽ quét lại');
                 setStatus('Lỗi — đang quét lại...');
@@ -790,6 +958,7 @@ $(document).ready(function() {
         liveStarted = false;
         busy = false;
         scanning = false;
+        setScanPhase('detect');
         showResult(false, msg || 'Sai mã / lỗi — chờ máy tính nhập lại mã');
         setStatus('Chờ quẹt mã (nhập trên máy tính)...');
     }
@@ -818,11 +987,7 @@ $(document).ready(function() {
                     '<strong>Đã gửi đối chiếu</strong><br>Biển ra: <b>' + (res.exit_plate || plateHint) +
                     '</b><br>Máy tính: biển khớp sẽ tự cho ra'
                 );
-                setStatus('Xong — chờ mã code tiếp theo...');
-                setTimeout(function() {
-                    $('#scan-result').fadeOut();
-                    resumeAfterAttempt(1500);
-                }, 3500);
+                holdForFrontendCountdown(res.pause_ocr_s || FRONTEND_HOLD_S);
             } else {
                 const msg = (res && res.message) || 'Đối chiếu thất bại';
                 // Sai mã / bị clear trên PC → chờ nhập lại. Lỗi biển (keep_armed) → quét lại.
@@ -866,6 +1031,7 @@ $(document).ready(function() {
             if (!ready) {
                 setStatus('Camera mở nhưng chưa sẵn sàng — thử tải lại trang');
             } else {
+                setScanPhase('detect');
                 setStatus(IS_EXIT ? 'LIVE → màn giám sát | Chờ quẹt mã...' : 'LIVE → màn giám sát | Đang chờ biển số...');
             }
             pushLiveFrame();
@@ -905,11 +1071,16 @@ $(document).ready(function() {
     }
 
     function onLeaveScanPage() {
+        setScanPhase('idle');
         releaseLiveSlotKeepalive();
         // Dọn local; khóa đã gửi bye keepalive ở trên
         if (armedPollTimer) {
             clearTimeout(armedPollTimer);
             armedPollTimer = null;
+        }
+        if (holdPollTimer) {
+            clearTimeout(holdPollTimer);
+            holdPollTimer = null;
         }
         if (liveTimer) {
             clearTimeout(liveTimer);
@@ -919,6 +1090,7 @@ $(document).ready(function() {
             clearTimeout(scanTimer);
             scanTimer = null;
         }
+        clearPauseTick();
         if (rtcPollTimer) {
             clearTimeout(rtcPollTimer);
             rtcPollTimer = null;

@@ -19,6 +19,10 @@ Route::middleware(['web', 'auth', 'account.active', 'session.release'])->group(f
         Route::get('/recent-logs', [ApiController::class, 'getRecentLogs'])->name('api.recent_logs');
         Route::post('/arm-exit-code', [ApiController::class, 'armExitCode'])->name('api.arm_exit_code');
         Route::post('/clear-exit-code', [ApiController::class, 'clearExitCode'])->name('api.clear_exit_code');
+        Route::post('/manual-confirm-entry', [ApiController::class, 'manualConfirmEntry'])->name('api.manual_confirm_entry');
+        Route::post('/manual-confirm-exit', [ApiController::class, 'manualConfirmExit'])->name('api.manual_confirm_exit');
+        Route::post('/scan-cooldown', [ApiController::class, 'scanCooldown'])->name('api.scan_cooldown');
+        Route::post('/scan-hold-ack', [ApiController::class, 'ackScanHold'])->name('api.scan_hold_ack');
     });
 
     // LIVE + poll mã: gọi liên tục, đã nhả session sớm
@@ -26,4 +30,5 @@ Route::middleware(['web', 'auth', 'account.active', 'session.release'])->group(f
     Route::get('/live-status', [ApiController::class, 'livePreviewStatus'])->name('api.live_status');
     Route::get('/guard-monitor', [ApiController::class, 'guardMonitorState'])->name('api.guard_monitor');
     Route::get('/armed-exit-code', [ApiController::class, 'armedExitCodeStatus'])->name('api.armed_exit_code');
+    Route::get('/scan-hold', [ApiController::class, 'scanHoldStatus'])->name('api.scan_hold');
 });
