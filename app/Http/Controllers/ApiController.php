@@ -705,6 +705,7 @@ class ApiController extends Controller
             if (!$aiResult['success']) {
                 return response()->json([
                     'success' => false,
+                    'ocr_failed' => true,
                     'message' => $aiResult['error']
                 ]);
             }
@@ -845,6 +846,7 @@ class ApiController extends Controller
                 // Giữ mã đã kích hoạt để ĐT quét lại biển; báo retryable cho UI
                 return response()->json([
                     'success' => false,
+                    'ocr_failed' => true,
                     'message' => 'Lỗi nhận diện ảnh ra: ' . $aiResult['error'] . '. Có thể quét lại.',
                     'retryable' => true,
                     'keep_armed' => true,

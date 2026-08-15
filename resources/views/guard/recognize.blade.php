@@ -51,6 +51,9 @@
                                 <div class="fs-6 fw-semibold" id="entry-error-msg"></div>
                             </div>
                         </div>
+                        <button type="button" id="btn-manual-entry" class="btn btn-primary w-100 fw-bold shadow-sm mt-2" style="display: none;">
+                            <i class="material-icons-outlined align-middle me-1">check_circle</i> Xác nhận
+                        </button>
                     </div>
                 </div>
             </div>
@@ -95,6 +98,9 @@
                                 </small>
                             </div>
                         </div>
+                        <button type="button" id="btn-manual-exit" class="btn btn-danger w-100 fw-bold shadow-sm mt-2" style="display: none;">
+                            <i class="material-icons-outlined align-middle me-1">check_circle</i> Xác nhận
+                        </button>
                     </div>
                 </div>
             </div>
@@ -194,8 +200,12 @@ $(document).ready(function() {
         entry: @json(route('api.recognize_entry', [], false)),
         exit: @json(route('api.checkout_exit', [], false)),
         validate: @json(route('api.validate_checkout', [], false)),
-        scanHoldAck: @json(route('api.scan_hold_ack', [], false))
+        scanHoldAck: @json(route('api.scan_hold_ack', [], false)),
+        manualEntry: @json(route('api.manual_confirm_entry', [], false)),
+        manualExit: @json(route('api.manual_confirm_exit', [], false))
     };
+
+    const UNRECOGNIZED_PLATE = 'không thể nhận diện';
 
     let entryTimerInterval = null;
     let exitTimerInterval = null;
@@ -251,6 +261,7 @@ $(document).ready(function() {
         $('#entry-camera').hide().attr('src', '');
         $('#entry-placeholder').show();
         $('#entry-result, #entry-error').fadeOut();
+        hideManualConfirm('entry');
     }
 
     function resetExitAndComparison() {
@@ -266,6 +277,7 @@ $(document).ready(function() {
         $('#exit-placeholder').show();
         $('#exit-result').hide();
         $('#exit-auto-timer-wrap').addClass('d-none');
+        hideManualConfirm('exit');
         $('#comp-entry-img, #comp-exit-img').hide().attr('src', '');
         $('#comp-entry-empty, #comp-exit-empty').show();
         $('#comp-entry-plate, #comp-exit-plate').text('-');
@@ -305,6 +317,7 @@ $(document).ready(function() {
 
     function showEntrySuccess(plate, code, imageUrl) {
         entryCooldown = true;
+        hideManualConfirm('entry');
         $('#entry-error').hide();
         $('#entry-file, #btn-entry-recognize').prop('disabled', true);
         $('#btn-entry-recognize').html(entryBtnHtml(false));
@@ -340,6 +353,7 @@ $(document).ready(function() {
         $('#entry-error-title').text('Xe vẫn nằm trong bãi');
         $('#entry-error-msg').text(alert.message || 'Xe này chưa ra khỏi bãi — không thể nhận diện vào lần nữa.');
         $('#entry-error').show();
+        hideManualConfirm('entry');
         insideAlertPending = true;
         $('#entry-file, #btn-entry-recognize').prop('disabled', true);
         showNotificationModal(false, 'Xe vẫn nằm trong bãi', alert.message || 'Xe này chưa ra khỏi bãi.', { requireAck: true });
@@ -372,6 +386,7 @@ $(document).ready(function() {
 
         const alertBox = $('#exit-alert-box');
         $('#exit-result').show();
+        hideManualConfirm('exit');
 
         if (data.match) {
             exitLocked = true;
@@ -419,7 +434,7 @@ $(document).ready(function() {
         }
     }
 
-    function showExitError(message) {
+    function showExitError(message, ocrFailed) {
         exitLocked = false;
         setExitControlsEnabled(true);
         const alertBox = $('#exit-alert-box');
@@ -432,6 +447,24 @@ $(document).ready(function() {
         $('#validation-buttons').hide();
         $('#comp-status-badge').removeClass('bg-success bg-danger text-white').addClass('bg-warning text-dark')
             .text('Lỗi nhận diện');
+        if (ocrFailed) {
+            showManualConfirm('exit');
+        } else {
+            hideManualConfirm('exit');
+        }
+    }
+
+    function manualBtnHtml() {
+        return '<i class="material-icons-outlined align-middle me-1">check_circle</i> Xác nhận';
+    }
+
+    function showManualConfirm(side) {
+        const btn = $('#btn-manual-' + side);
+        btn.prop('disabled', false).html(manualBtnHtml()).show();
+    }
+
+    function hideManualConfirm(side) {
+        $('#btn-manual-' + side).hide().prop('disabled', false).html(manualBtnHtml());
     }
 
     function entryBtnHtml(busy) {
@@ -450,6 +483,7 @@ $(document).ready(function() {
         const btn = $('#btn-entry-recognize');
         btn.prop('disabled', true).html(entryBtnHtml(true));
         $('#entry-result, #entry-error').hide();
+        hideManualConfirm('entry');
         if (entryTimerInterval) clearInterval(entryTimerInterval);
         $.ajax({
             url: API.entry,
@@ -466,6 +500,9 @@ $(document).ready(function() {
                     $('#entry-error-title').text('Lỗi nhận diện');
                     $('#entry-error-msg').text(response.message || 'Có lỗi xảy ra!');
                     $('#entry-error').fadeIn();
+                    if (response.ocr_failed) {
+                        showManualConfirm('entry');
+                    }
                 }
             },
             error: function(xhr) {
@@ -492,6 +529,7 @@ $(document).ready(function() {
     function submitExit(imageSource, codeVal) {
         if (exitLocked) return;
         $('#btn-exit-recognize').prop('disabled', true).html(exitBtnHtml(true));
+        hideManualConfirm('exit');
 
         function doSubmit() {
             const fd = new FormData();
@@ -516,13 +554,13 @@ $(document).ready(function() {
                             message: response.message
                         });
                     } else {
-                        showExitError(response.message || 'Có lỗi xảy ra');
+                        showExitError(response.message || 'Có lỗi xảy ra', !!response.ocr_failed);
                     }
                 },
                 error: function(xhr) {
                     let msg = 'Lỗi kết nối máy chủ (HTTP ' + xhr.status + ').';
                     if (xhr.responseJSON && xhr.responseJSON.message) msg = xhr.responseJSON.message;
-                    showExitError(msg);
+                    showExitError(msg, !!(xhr.responseJSON && xhr.responseJSON.ocr_failed));
                 },
                 complete: function() {
                     if (exitLocked) {
@@ -548,6 +586,7 @@ $(document).ready(function() {
     $('#entry-file').change(function() {
         const file = this.files[0];
         if (!file) return;
+        hideManualConfirm('entry');
         const reader = new FileReader();
         reader.onload = function(e) {
             $('#entry-placeholder').hide();
@@ -566,6 +605,7 @@ $(document).ready(function() {
     $('#exit-file').change(function() {
         const file = this.files[0];
         if (!file) return;
+        hideManualConfirm('exit');
         const reader = new FileReader();
         reader.onload = function(e) {
             $('#exit-placeholder').hide();
@@ -581,6 +621,74 @@ $(document).ready(function() {
             return;
         }
         showNotificationModal(false, 'Chưa có ảnh', 'Vui lòng chọn ảnh xe vào để nhận diện.');
+    });
+
+    function setManualBtnBusy(side, busy) {
+        const btn = $('#btn-manual-' + side);
+        if (busy) {
+            btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span> Đang xác nhận...');
+        } else {
+            btn.prop('disabled', false).html(manualBtnHtml());
+        }
+    }
+
+    function onManualConfirm(side) {
+        const btn = $('#btn-manual-' + side);
+        if (!btn.is(':visible') || btn.prop('disabled')) return;
+
+        const fileInput = $('#' + (side === 'exit' ? 'exit-file' : 'entry-file'))[0];
+        if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+            showNotificationModal(false, 'Chưa có ảnh', 'Vui lòng chọn ảnh trước khi xác nhận.');
+            return;
+        }
+
+        if (side === 'exit') {
+            const code = ($('#exit-code').val() || '').trim();
+            if (code.length !== 6) {
+                showNotificationModal(false, 'Thiếu mã code', 'Vui lòng nhập mã code 6 ký tự trước khi xác nhận xe ra.');
+                return;
+            }
+        }
+
+        setManualBtnBusy(side, true);
+        const fd = new FormData();
+        fd.append('image', fileInput.files[0]);
+        if (side === 'exit') {
+            fd.append('code', ($('#exit-code').val() || '').trim().toUpperCase());
+        }
+
+        $.ajax({
+            url: side === 'exit' ? API.manualExit : API.manualEntry,
+            type: 'POST',
+            data: fd,
+            processData: false,
+            contentType: false,
+            success: function(res) {
+                if (!res || !res.success) {
+                    setManualBtnBusy(side, false);
+                    showNotificationModal(false, 'Xác nhận thất bại', (res && res.message) || 'Không xác nhận được.');
+                    return;
+                }
+                hideManualConfirm(side);
+                if (side === 'entry') {
+                    showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url || null);
+                } else {
+                    showPendingValidation(res);
+                }
+            },
+            error: function(xhr) {
+                setManualBtnBusy(side, false);
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) || 'Lỗi kết nối khi xác nhận.';
+                showNotificationModal(false, 'Xác nhận thất bại', msg);
+            }
+        });
+    }
+
+    $('#btn-manual-entry').click(function() {
+        onManualConfirm('entry');
+    });
+    $('#btn-manual-exit').click(function() {
+        onManualConfirm('exit');
     });
 
     $('#btn-exit-recognize').click(function() {
