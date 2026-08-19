@@ -88,9 +88,27 @@
                             </a>
                         </li>
                         <li>
+                            <a href="{{ route('manager.ticket_prices') }}">
+                                <div class="parent-icon"><i class="material-icons-outlined">payments</i></div>
+                                <div class="menu-title">Cài đặt giá vé</div>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="{{ route('manager.monthly_tickets') }}">
+                                <div class="parent-icon"><i class="material-icons-outlined">card_membership</i></div>
+                                <div class="menu-title">Quản lý vé tháng</div>
+                            </a>
+                        </li>
+                        <li>
                             <a href="{{ route('manager.vehicle_logs') }}">
                                 <div class="parent-icon"><i class="material-icons-outlined">history</i></div>
                                 <div class="menu-title">Lịch sử ra vào</div>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="{{ route('manager.monthly_vehicle_logs') }}">
+                                <div class="parent-icon"><i class="material-icons-outlined">event_note</i></div>
+                                <div class="menu-title">Lịch sử vé tháng</div>
                             </a>
                         </li>
                     @elseif(auth()->user()->role === 'guard')

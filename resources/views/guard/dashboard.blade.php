@@ -50,6 +50,14 @@
                         </div>
                     </div>
 
+                    <div class="input-group mb-2 shadow-sm">
+                        <span class="input-group-text bg-light text-primary fw-bold small"><i class="material-icons-outlined me-1 fs-6">qr_code</i> Mã vé tháng</span>
+                        <input type="text" id="entry-code" class="form-control text-uppercase fw-bold" placeholder="A00001" maxlength="6">
+                    </div>
+                    <small id="entry-code-arm-hint" class="text-muted d-block mb-2" style="font-size: 13px;">
+                        Để trống nếu vé ngày. Nhập đúng mã vé tháng sẽ hiện xanh.
+                    </small>
+
                     <button type="button" id="btn-manual-entry" class="btn btn-primary w-100 fw-bold shadow-sm mb-2" disabled title="Chỉ bấm được khi camera đang kết nối">
                         <i class="material-icons-outlined align-middle me-1">check_circle</i> Xác nhận
                     </button>
@@ -88,7 +96,8 @@
                     <div class="border rounded p-2 bg-light shadow-sm">
                         <div class="d-flex flex-column gap-1 mb-1">
                             <span class="badge bg-primary align-self-start px-2 py-1">Ảnh Xe Vào</span>
-                            <span class="small fw-semibold">BSX: <strong id="comp-in-plate" class="text-primary">-</strong></span>
+                            <span class="small fw-semibold">BSX đăng ký: <strong id="comp-in-reg-plate" class="text-success">-</strong></span>
+                            <span class="small fw-semibold">BSX nhận diện: <strong id="comp-in-plate" class="text-primary">-</strong></span>
                         </div>
                         <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 120px;">
                             <img id="comp-in-img" src="" alt="Ảnh xe vào"
@@ -96,6 +105,17 @@
                             <span id="comp-in-empty" class="text-muted text-center" style="font-size: 11px;">
                                 <i class="material-icons-outlined fs-4">image_not_supported</i><br>Chưa có ảnh vào
                             </span>
+                        </div>
+                    </div>
+                    <div class="mt-2 pt-2 border-top" id="entry-validation-buttons" style="display: none;">
+                        <p class="text-center text-muted mb-2 fw-semibold" style="font-size: 12px;">Đối chiếu BSX vé tháng:</p>
+                        <div class="d-flex flex-column gap-2">
+                            <button type="button" id="btn-entry-valid" class="btn btn-success fw-bold shadow-sm py-2">
+                                <i class="material-icons-outlined align-middle me-1">check_circle</i> Hợp lệ
+                            </button>
+                            <button type="button" id="btn-entry-invalid" class="btn btn-outline-danger fw-bold shadow-sm py-2">
+                                <i class="material-icons-outlined align-middle me-1">cancel</i> Không hợp lệ
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -147,6 +167,9 @@
                                 </div>
                                 <div id="exit-auto-timer-wrap" class="text-muted d-none" style="font-size: 11px;">
                                     Tự động cho ra sau <span id="exit-auto-timer" class="fw-bold">10</span> giây...
+                                </div>
+                                <div id="exit-fee-wrap" class="d-none fw-bold text-danger" style="font-size: 14px;">
+                                    <span id="exit-fee-text"></span>
                                 </div>
                                 <button type="button" id="btn-exit-retry-inline" class="btn btn-sm btn-outline-danger fw-bold mt-1" style="display: none;">
                                     <i class="material-icons-outlined align-middle me-1" style="font-size: 16px;">refresh</i> Làm lại
@@ -261,6 +284,9 @@ $(document).ready(function() {
         webrtcPoll: @json(route('guard.webrtc_signal_poll', [], false)),
         armExit: @json(route('api.arm_exit_code', [], false)),
         clearExit: @json(route('api.clear_exit_code', [], false)),
+        armMonthly: @json(route('api.arm_monthly_code', [], false)),
+        clearMonthly: @json(route('api.clear_monthly_code', [], false)),
+        validateMonthly: @json(route('api.validate_monthly_entry', [], false)),
         retryExit: @json(route('api.retry_exit', [], false)),
         validate: @json(route('api.validate_checkout', [], false)),
         manualEntry: @json(route('api.manual_confirm_entry', [], false)),
@@ -597,6 +623,69 @@ $(document).ready(function() {
     let lastArmConflictCode = '';
     let armInFlight = false;
     let conflictRetryTimer = null;
+    let lastArmedMonthly = '';
+    let lastMonthlyFailed = '';
+    let currentMonthlyLogId = null;
+    let lastSeenMonthlyPendingId = null;
+    let pendingValidationKind = 'exit';
+
+    function showExitFee(data) {
+        if (!data || (data.ticket_type !== 'monthly' && data.fee == null && !data.fee_text)) {
+            $('#exit-fee-wrap').addClass('d-none');
+            return;
+        }
+        if (data.ticket_type === 'monthly') {
+            $('#exit-fee-text').text('Vé tháng: 0 VNĐ');
+        } else {
+            $('#exit-fee-text').text('Giá tiền: ' + (data.fee_text || (Number(data.fee || 0).toLocaleString('vi-VN') + ' VNĐ')));
+        }
+        $('#exit-fee-wrap').removeClass('d-none');
+    }
+
+    function hideExitFee() {
+        $('#exit-fee-wrap').addClass('d-none');
+        $('#exit-fee-text').text('');
+    }
+
+    function armMonthlyIfReady() {
+        const code = ($('#entry-code').val() || '').trim().toUpperCase();
+        if (!code) {
+            lastArmedMonthly = '';
+            lastMonthlyFailed = '';
+            $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
+                .text('Để trống nếu vé ngày. Nhập đúng mã vé tháng sẽ hiện xanh.');
+            if (!$('#entry-validation-buttons').is(':visible')) {
+                $('#comp-in-reg-plate').text('-');
+            }
+            $.post(API.clearMonthly);
+            return;
+        }
+        if (code.length !== 6) return;
+        if (code === lastArmedMonthly || code === lastMonthlyFailed) return;
+        $.post(API.armMonthly, { code: code })
+            .done(function(res) {
+                if (res && res.found) {
+                    lastArmedMonthly = code;
+                    lastMonthlyFailed = '';
+                    $('#entry-code-arm-hint').removeClass('text-muted text-danger').addClass('text-success')
+                        .text('Vé tháng ' + res.code + ' — BSX ' + (res.plate_number || ''));
+                    $('#comp-in-reg-plate').text(res.plate_number || '-');
+                    $('#comp-in-status-badge').removeClass('bg-danger text-white').addClass('bg-light text-primary')
+                        .text('Đã nạp vé tháng');
+                } else {
+                    lastArmedMonthly = '';
+                    lastMonthlyFailed = code;
+                    $('#entry-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
+                        .text((res && res.message) || 'Không tìm thấy vé tháng — sẽ tính vé ngày');
+                    if (!$('#entry-validation-buttons').is(':visible')) {
+                        $('#comp-in-reg-plate').text('-');
+                    }
+                }
+            })
+            .fail(function() {
+                lastMonthlyFailed = code;
+            });
+    }
 
     function stopConflictRetry() {
         if (conflictRetryTimer) {
@@ -831,6 +920,11 @@ $(document).ready(function() {
         $('#comp-in-img').hide().attr('src', '');
         $('#comp-in-empty').show();
         $('#comp-in-plate').text('-');
+        if (!lastArmedMonthly) {
+            $('#comp-in-reg-plate').text('-');
+        }
+        $('#entry-validation-buttons').hide();
+        currentMonthlyLogId = null;
         $('#comp-in-status-badge')
             .removeClass('bg-warning text-dark bg-danger text-white')
             .addClass('bg-light text-primary')
@@ -869,6 +963,7 @@ $(document).ready(function() {
         // Không đụng ô camera LIVE / nửa trên đối chiếu xe vào
         $('#exit-result').hide();
         $('#exit-auto-timer-wrap').addClass('d-none');
+        hideExitFee();
         $('#btn-exit-retry-inline').hide();
         clearExitCompare();
         currentLogId = null;
@@ -928,9 +1023,26 @@ $(document).ready(function() {
             });
     }
 
+    function showPendingMonthlyEntry(data) {
+        if (!data || !data.log_id) return;
+        currentMonthlyLogId = data.log_id;
+        lastSeenMonthlyPendingId = data.log_id;
+        $('#comp-in-reg-plate').text(data.registered_plate || '-');
+        setEntryCompare(data.entry_plate, data.entry_image, 'BSX không khớp vé tháng');
+        $('#comp-in-status-badge').removeClass('bg-light text-primary').addClass('bg-danger text-white')
+            .text('BSX không khớp vé tháng');
+        $('#entry-validation-buttons').show();
+        $('#entry-result').hide();
+        $('#entry-error').hide();
+        manualConfirmHidden.entry = true;
+        $('#btn-manual-entry').hide();
+    }
+
     function showEntrySuccess(plate, code, imageUrl) {
         entryShowingResult = false;
         $('#entry-error').hide();
+        $('#entry-validation-buttons').hide();
+        currentMonthlyLogId = null;
         manualConfirmHidden.entry = true;
         $('#btn-manual-entry').hide();
         setEntryCompare(plate, imageUrl, 'Xe vào OK');
@@ -1016,6 +1128,7 @@ $(document).ready(function() {
             let seconds = 10;
             $('#exit-auto-timer').text(seconds);
             $('#exit-auto-timer-wrap').removeClass('d-none');
+            showExitFee(data);
             $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
                 .text('Biển khớp — tự động cho ra sau ' + seconds + 's');
             if (!data.already_out) {
@@ -1041,6 +1154,7 @@ $(document).ready(function() {
             $('#exit-alert-icon').text('warning');
             $('#exit-message').text(data.message || 'Biển số không khớp');
             $('#exit-auto-timer-wrap').addClass('d-none');
+            hideExitFee();
             $('#comp-status-badge').removeClass('bg-warning bg-success text-dark').addClass('bg-danger text-white')
                 .text('BSX không trùng — cần xác nhận thủ công');
             $('#validation-buttons').show();
@@ -1099,6 +1213,15 @@ $(document).ready(function() {
                     lastArmedCode = '';
                     lastArmFailedCode = '';
                     lastArmConflictCode = '';
+                    lastArmedMonthly = '';
+                    lastMonthlyFailed = '';
+                    lastSeenMonthlyPendingId = null;
+                    currentMonthlyLogId = null;
+                    $('#entry-code').val('');
+                    $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
+                        .text('Để trống nếu vé ngày. Nhập đúng mã vé tháng sẽ hiện xanh.');
+                    $('#entry-validation-buttons').hide();
+                    $('#comp-in-reg-plate').text('-');
                     $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
                         .text('Nhập mã 6 ký tự để ĐT bắt đầu quét');
 
@@ -1119,6 +1242,13 @@ $(document).ready(function() {
                 if (entryAlert && entryAlert.id && String(entryAlert.id) !== String(lastSeenEntryAlertId || '')) {
                     lastSeenEntryAlertId = String(entryAlert.id);
                     showAlreadyInsideAlert(entryAlert);
+                }
+
+                const monthlyPending = res.pending_monthly_entry;
+                if (monthlyPending && monthlyPending.log_id) {
+                    if (monthlyPending.log_id !== lastSeenMonthlyPendingId) {
+                        showPendingMonthlyEntry(monthlyPending);
+                    }
                 }
 
                 const entry = res.last_entry;
@@ -1267,6 +1397,9 @@ $(document).ready(function() {
         }
         if (side === 'exit') {
             fd.append('code', ($('#exit-code').val() || '').trim().toUpperCase());
+        } else {
+            const monthly = ($('#entry-code').val() || '').trim().toUpperCase();
+            if (monthly) fd.append('monthly_code', monthly);
         }
         return $.ajax({
             url: side === 'exit' ? API.manualExit : API.manualEntry,
@@ -1302,7 +1435,17 @@ $(document).ready(function() {
 
             if (side === 'entry') {
                 if (res.log_id) lastSeenEntryId = res.log_id;
-                showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url);
+                if (res.monthly_pending) {
+                    showPendingMonthlyEntry({
+                        log_id: res.log_id,
+                        registered_plate: res.registered_plate,
+                        entry_plate: res.plate_number,
+                        entry_image: res.image_url,
+                        message: res.message
+                    });
+                } else {
+                    showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url);
+                }
             } else {
                 showPendingValidation(res);
             }
@@ -1338,36 +1481,97 @@ $(document).ready(function() {
 
     let pendingValidationAction = null;
     const confirmModalObj = new bootstrap.Modal(document.getElementById('confirmValidationModal'));
+    function openConfirm(kind, isValid) {
+        pendingValidationKind = kind;
+        pendingValidationAction = isValid;
+        if (isValid) {
+            $('#confirmModalHeader').removeClass('bg-danger').addClass('bg-success');
+            $('#confirmModalTitle').html('<span class="text-white"><i class="material-icons-outlined align-middle me-1">check_circle</i> Xác nhận Hợp Lệ</span>');
+            $('#confirmModalIcon').html('<i class="material-icons-outlined text-success" style="font-size: 70px;">check_circle_outline</i>');
+            $('#confirmModalQuestion').text(kind === 'monthly'
+                ? 'Xác nhận BSX HỢP LỆ với vé tháng và cho xe vào?'
+                : 'Xác nhận phương tiện HỢP LỆ và cho phép ra?');
+            $('#confirmModalSubmitBtn').removeClass('btn-danger').addClass('btn-success')
+                .text(kind === 'monthly' ? 'Đồng ý Cho Vào' : 'Đồng ý Cho Ra');
+        } else {
+            $('#confirmModalHeader').removeClass('bg-success').addClass('bg-danger');
+            $('#confirmModalTitle').html('<span class="text-white"><i class="material-icons-outlined align-middle me-1">warning</i> Xác nhận Không Hợp Lệ</span>');
+            $('#confirmModalIcon').html('<i class="material-icons-outlined text-danger" style="font-size: 70px;">gpp_bad</i>');
+            $('#confirmModalQuestion').text(kind === 'monthly'
+                ? 'Xác nhận KHÔNG HỢP LỆ — tính vé ngày cho lượt này?'
+                : 'Xác nhận phương tiện KHÔNG HỢP LỆ (Từ chối cho ra)?');
+            $('#confirmModalSubmitBtn').removeClass('btn-success').addClass('btn-danger')
+                .text(kind === 'monthly' ? 'Tính vé ngày' : 'Xác Nhận Từ Chối');
+        }
+        confirmModalObj.show();
+    }
     $('#btn-valid').click(function() {
         if (!currentLogId) return;
-        pendingValidationAction = true;
-        $('#confirmModalHeader').removeClass('bg-danger').addClass('bg-success');
-        $('#confirmModalTitle').html('<span class="text-white"><i class="material-icons-outlined align-middle me-1">check_circle</i> Xác nhận Hợp Lệ</span>');
-        $('#confirmModalIcon').html('<i class="material-icons-outlined text-success" style="font-size: 70px;">check_circle_outline</i>');
-        $('#confirmModalQuestion').text('Xác nhận phương tiện HỢP LỆ và cho phép ra?');
-        $('#confirmModalSubmitBtn').removeClass('btn-danger').addClass('btn-success').text('Đồng ý Cho Ra');
-        confirmModalObj.show();
+        openConfirm('exit', true);
     });
     $('#btn-invalid').click(function() {
         if (!currentLogId) return;
-        pendingValidationAction = false;
-        $('#confirmModalHeader').removeClass('bg-success').addClass('bg-danger');
-        $('#confirmModalTitle').html('<span class="text-white"><i class="material-icons-outlined align-middle me-1">warning</i> Xác nhận Không Hợp Lệ</span>');
-        $('#confirmModalIcon').html('<i class="material-icons-outlined text-danger" style="font-size: 70px;">gpp_bad</i>');
-        $('#confirmModalQuestion').text('Xác nhận phương tiện KHÔNG HỢP LỆ (Từ chối cho ra)?');
-        $('#confirmModalSubmitBtn').removeClass('btn-success').addClass('btn-danger').text('Xác Nhận Từ Chối');
-        confirmModalObj.show();
+        openConfirm('exit', false);
+    });
+    $('#btn-entry-valid').click(function() {
+        if (!currentMonthlyLogId) return;
+        openConfirm('monthly', true);
+    });
+    $('#btn-entry-invalid').click(function() {
+        if (!currentMonthlyLogId) return;
+        openConfirm('monthly', false);
     });
     $('#confirmModalSubmitBtn').click(function() {
-        if (pendingValidationAction === null || !currentLogId) return;
+        if (pendingValidationAction === null) return;
         const isValid = pendingValidationAction;
+        const kind = pendingValidationKind;
         const btnSubmit = $(this);
         btnSubmit.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span> Đang xử lý...');
+        if (kind === 'monthly') {
+            $.post(API.validateMonthly, { log_id: currentMonthlyLogId, is_valid: isValid }, function(res) {
+                confirmModalObj.hide();
+                if (res.success) {
+                    $('#entry-validation-buttons').hide();
+                    currentMonthlyLogId = null;
+                    if (res.log_id) lastSeenEntryId = res.log_id;
+                    showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url);
+                } else {
+                    showNotificationModal(false, 'Thao Tác Thất Bại', res.message);
+                }
+            }).always(function() {
+                btnSubmit.prop('disabled', false).text(isValid ? 'Đồng ý Cho Vào' : 'Tính vé ngày');
+            });
+            return;
+        }
+        if (!currentLogId) return;
         $.post(API.validate, { log_id: currentLogId, is_valid: isValid }, function(res) {
             confirmModalObj.hide();
             if (res.success) {
-                showNotificationModal(isValid, isValid ? 'Đã Cho Phép Xe Ra!' : 'Đã Từ Chối Phương Tiện!', res.message);
-                resetExitAndComparison();
+                if (isValid) {
+                    $('#validation-buttons').hide();
+                    const alertBox = $('#exit-alert-box');
+                    alertBox.removeClass('alert-danger alert-info').addClass('alert-success');
+                    $('#exit-alert-icon').text('check_circle');
+                    $('#exit-message').html('Đã cho phép xe ra!');
+                    showExitFee(res);
+                    let seconds = 10;
+                    $('#exit-auto-timer').text(seconds);
+                    $('#exit-auto-timer-wrap').removeClass('d-none');
+                    $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
+                        .text('Đã cho ra thành công');
+                    if (exitTimerInterval) clearInterval(exitTimerInterval);
+                    exitTimerInterval = setInterval(function() {
+                        seconds--;
+                        $('#exit-auto-timer').text(seconds);
+                        if (seconds <= 0) {
+                            clearExitTimer();
+                            setTimeout(function() { resetExitAndComparison(); }, 400);
+                        }
+                    }, 1000);
+                } else {
+                    showNotificationModal(false, 'Đã Từ Chối Phương Tiện!', res.message);
+                    resetExitAndComparison();
+                }
             } else {
                 showNotificationModal(false, 'Thao Tác Thất Bại', res.message);
             }
@@ -1386,6 +1590,12 @@ $(document).ready(function() {
     $('#exit-code').on('input', function() {
         this.value = (this.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
         armExitCodeIfReady();
+    });
+    $('#entry-code').on('input', function() {
+        this.value = (this.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+        lastArmedMonthly = '';
+        lastMonthlyFailed = '';
+        armMonthlyIfReady();
     });
 });
 </script>

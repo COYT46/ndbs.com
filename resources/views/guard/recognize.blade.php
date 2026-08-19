@@ -2,6 +2,21 @@
 
 @section('title', 'Nhận diện bằng ảnh')
 
+@push('css')
+<style>
+    @media (min-width: 1200px) {
+        .col-xl-3-5 {
+            flex: 0 0 auto;
+            width: 29.16666667%;
+        }
+        .col-xl-2-5 {
+            flex: 0 0 auto;
+            width: 20.83333333%;
+        }
+    }
+</style>
+@endpush
+
 @section('content')
 <div class="container-fluid">
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
@@ -9,8 +24,8 @@
         <span class="badge bg-secondary">Máy tính / chọn file ảnh</span>
     </div>
 
-    <div class="row g-4 mb-4">
-        <div class="col-12 col-xl-4">
+    <div class="row g-3 mb-4" id="comparison-section">
+        <div class="col-12 col-xl-3-5">
             <div class="card h-100 border-primary shadow-sm">
                 <div class="card-header bg-primary text-white d-flex align-items-center justify-content-between py-3">
                     <h5 class="mb-0 text-white fw-bold fs-6"><i class="material-icons-outlined align-middle me-1">login</i> Xe Vào (Check-In)</h5>
@@ -26,9 +41,16 @@
                                 <h6 class="mt-2 text-dark fw-bold small">Chọn ảnh xe vào để nhận diện</h6>
                             </div>
                         </div>
-                        <div class="mb-3" id="entry-controls">
+                        <div class="mb-2" id="entry-controls">
                             <input type="file" id="entry-file" class="form-control" accept="image/*">
                         </div>
+                        <div class="input-group mb-2 shadow-sm">
+                            <span class="input-group-text bg-light text-primary fw-bold small"><i class="material-icons-outlined me-1 fs-6">qr_code</i> Mã vé tháng</span>
+                            <input type="text" id="entry-code" class="form-control text-uppercase fw-bold" placeholder="A00001" maxlength="6">
+                        </div>
+                        <small id="entry-code-arm-hint" class="text-muted d-block mb-2" style="font-size: 13px;">
+                            Để trống nếu vé ngày. Nhập đúng mã vé tháng sẽ hiện xanh.
+                        </small>
                     </div>
                     <div>
                         <button id="btn-entry-recognize" class="btn btn-primary w-100 fw-bold shadow-sm py-2">
@@ -59,7 +81,44 @@
             </div>
         </div>
 
-        <div class="col-12 col-xl-4">
+        <div class="col-12 col-md-6 col-xl-2-5">
+            <div class="card h-100 border-primary shadow-sm">
+                <div class="card-header bg-primary text-white py-2 px-2">
+                    <h5 class="mb-1 text-white fw-bold" style="font-size: 13px; line-height: 1.3;">
+                        <i class="material-icons-outlined align-middle me-1" style="font-size: 16px;">login</i> Đối chiếu xe vào
+                    </h5>
+                    <span class="badge bg-light text-primary w-100 py-1 d-block text-truncate" id="comp-in-status-badge" style="font-size: 11px;">Chờ nhận diện xe vào</span>
+                </div>
+                <div class="card-body p-2">
+                    <div class="border rounded p-2 bg-light shadow-sm">
+                        <div class="d-flex flex-column gap-1 mb-1">
+                            <span class="badge bg-primary align-self-start px-2 py-1">Ảnh Xe Vào</span>
+                            <span class="small fw-semibold">BSX đăng ký: <strong id="comp-in-reg-plate" class="text-success">-</strong></span>
+                            <span class="small fw-semibold">BSX nhận diện: <strong id="comp-in-plate" class="text-primary">-</strong></span>
+                        </div>
+                        <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 140px;">
+                            <img id="comp-in-img" src="" alt="Ảnh xe vào" style="max-height: 100%; max-width: 100%; object-fit: contain; display: none;">
+                            <span id="comp-in-empty" class="text-muted text-center" style="font-size: 11px;">
+                                <i class="material-icons-outlined fs-4">image_not_supported</i><br>Chưa có ảnh vào
+                            </span>
+                        </div>
+                    </div>
+                    <div class="mt-2 pt-2 border-top" id="entry-validation-buttons" style="display: none;">
+                        <p class="text-center text-muted mb-2 fw-semibold" style="font-size: 12px;">Đối chiếu BSX vé tháng:</p>
+                        <div class="d-flex flex-column gap-2">
+                            <button type="button" id="btn-entry-valid" class="btn btn-success fw-bold shadow-sm py-2">
+                                <i class="material-icons-outlined align-middle me-1">check_circle</i> Hợp lệ
+                            </button>
+                            <button type="button" id="btn-entry-invalid" class="btn btn-outline-danger fw-bold shadow-sm py-2">
+                                <i class="material-icons-outlined align-middle me-1">cancel</i> Không hợp lệ
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-xl-3-5">
             <div class="card h-100 border-danger shadow-sm">
                 <div class="card-header bg-danger text-white d-flex align-items-center justify-content-between py-3">
                     <h5 class="mb-0 text-white fw-bold fs-6"><i class="material-icons-outlined align-middle me-1">logout</i> Xe Ra (Check-Out)</h5>
@@ -96,6 +155,9 @@
                                 <small id="exit-auto-timer-wrap" class="text-muted mt-1 d-none" style="font-size: 11px;">
                                     Tự động cho ra sau <span id="exit-auto-timer" class="fw-bold">10</span> giây...
                                 </small>
+                                <div id="exit-fee-wrap" class="d-none fw-bold text-danger mt-1" style="font-size: 14px;">
+                                    <span id="exit-fee-text"></span>
+                                </div>
                             </div>
                         </div>
                         <button type="button" id="btn-manual-exit" class="btn btn-danger w-100 fw-bold shadow-sm mt-2" style="display: none;">
@@ -106,44 +168,44 @@
             </div>
         </div>
 
-        <div class="col-12 col-xl-4">
-            <div class="card border-dark shadow-sm" id="comparison-section">
-                <div class="card-header bg-dark text-white p-3">
-                    <div class="d-flex align-items-center justify-content-between mb-2">
-                        <h5 class="mb-0 text-white fw-bold fs-6"><i class="material-icons-outlined align-middle me-1">compare</i> Đối chiếu Hình ảnh</h5>
-                    </div>
-                    <span class="badge bg-warning text-dark w-100 py-2 d-block text-truncate" id="comp-status-badge">Đang chờ nhận diện xe ra...</span>
+        <div class="col-12 col-md-6 col-xl-2-5">
+            <div class="card h-100 border-danger shadow-sm">
+                <div class="card-header bg-danger text-white py-2 px-2">
+                    <h5 class="mb-1 text-white fw-bold" style="font-size: 13px; line-height: 1.3;">
+                        <i class="material-icons-outlined align-middle me-1" style="font-size: 16px;">logout</i> Đối chiếu xe ra
+                    </h5>
+                    <span class="badge bg-warning text-dark w-100 py-1 d-block text-truncate" id="comp-status-badge" style="font-size: 11px;">Đang chờ nhận diện xe ra...</span>
                 </div>
-                <div class="card-body p-3">
-                    <div class="d-flex flex-column gap-3">
+                <div class="card-body p-2">
+                    <div class="d-flex flex-column gap-2">
                         <div class="border rounded p-2 bg-light shadow-sm">
-                            <div class="d-flex justify-content-between align-items-center mb-1">
-                                <span class="badge bg-primary px-2 py-1">Ảnh Xe Vào</span>
-                                <span class="small fw-semibold">BSX: <strong id="comp-entry-plate" class="text-primary fs-6">-</strong></span>
+                            <div class="d-flex flex-column gap-1 mb-1">
+                                <span class="badge bg-primary align-self-start px-2 py-1">Ảnh Xe Vào</span>
+                                <span class="small fw-semibold">BSX: <strong id="comp-entry-plate" class="text-primary">-</strong></span>
                             </div>
-                            <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 140px;">
+                            <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 120px;">
                                 <img id="comp-entry-img" src="" alt="Ảnh xe vào" style="max-height: 100%; max-width: 100%; object-fit: contain; display: none;">
-                                <span id="comp-entry-empty" class="text-muted text-center" style="font-size: 12px;"><i class="material-icons-outlined fs-3">image_not_supported</i><br>Chưa có ảnh vào</span>
+                                <span id="comp-entry-empty" class="text-muted text-center" style="font-size: 11px;"><i class="material-icons-outlined fs-4">image_not_supported</i><br>Chưa có ảnh vào</span>
                             </div>
                         </div>
                         <div class="border rounded p-2 bg-light shadow-sm">
-                            <div class="d-flex justify-content-between align-items-center mb-1">
-                                <span class="badge bg-danger px-2 py-1">Ảnh Xe Ra</span>
-                                <span class="small fw-semibold">BSX: <strong id="comp-exit-plate" class="text-danger fs-6">-</strong></span>
+                            <div class="d-flex flex-column gap-1 mb-1">
+                                <span class="badge bg-danger align-self-start px-2 py-1">Ảnh Xe Ra</span>
+                                <span class="small fw-semibold">BSX: <strong id="comp-exit-plate" class="text-danger">-</strong></span>
                             </div>
-                            <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 140px;">
+                            <div class="bg-white rounded d-flex align-items-center justify-content-center border overflow-hidden" style="height: 120px;">
                                 <img id="comp-exit-img" src="" alt="Ảnh xe ra" style="max-height: 100%; max-width: 100%; object-fit: contain; display: none;">
-                                <span id="comp-exit-empty" class="text-muted text-center" style="font-size: 12px;"><i class="material-icons-outlined fs-3">image_not_supported</i><br>Chưa có ảnh ra</span>
+                                <span id="comp-exit-empty" class="text-muted text-center" style="font-size: 11px;"><i class="material-icons-outlined fs-4">image_not_supported</i><br>Chưa có ảnh ra</span>
                             </div>
                         </div>
                     </div>
-                    <div class="mt-3 pt-3 border-top" id="validation-buttons" style="display: none;">
-                        <p class="text-center text-muted mb-2 fw-semibold" style="font-size: 13px;">Đối chiếu ảnh:</p>
-                        <div class="d-flex gap-2">
-                            <button type="button" id="btn-valid" class="btn btn-success flex-fill fw-bold shadow-sm py-2">
+                    <div class="mt-2 pt-2 border-top" id="validation-buttons" style="display: none;">
+                        <p class="text-center text-muted mb-2 fw-semibold" style="font-size: 12px;">Đối chiếu ảnh:</p>
+                        <div class="d-flex flex-column gap-2">
+                            <button type="button" id="btn-valid" class="btn btn-success fw-bold shadow-sm py-2">
                                 <i class="material-icons-outlined align-middle me-1">check_circle</i> Hợp lệ
                             </button>
-                            <button type="button" id="btn-invalid" class="btn btn-outline-danger flex-fill fw-bold shadow-sm py-2">
+                            <button type="button" id="btn-invalid" class="btn btn-outline-danger fw-bold shadow-sm py-2">
                                 <i class="material-icons-outlined align-middle me-1">cancel</i> Không hợp lệ
                             </button>
                         </div>
@@ -200,6 +262,8 @@ $(document).ready(function() {
         entry: @json(route('api.recognize_entry', [], false)),
         exit: @json(route('api.checkout_exit', [], false)),
         validate: @json(route('api.validate_checkout', [], false)),
+        validateMonthly: @json(route('api.validate_monthly_entry', [], false)),
+        lookupMonthly: @json(route('api.lookup_monthly_ticket', [], false)),
         scanHoldAck: @json(route('api.scan_hold_ack', [], false)),
         manualEntry: @json(route('api.manual_confirm_entry', [], false)),
         manualExit: @json(route('api.manual_confirm_exit', [], false))
@@ -211,8 +275,51 @@ $(document).ready(function() {
     let exitTimerInterval = null;
     let autoExitInProgress = false;
     let currentLogId = null;
+    let currentMonthlyLogId = null;
     let entryCooldown = false;
     let exitLocked = false;
+    let lastLookupMonthly = '';
+    let pendingValidationKind = 'exit';
+
+    function showExitFee(data) {
+        if (!data || (data.ticket_type !== 'monthly' && data.fee == null && !data.fee_text)) {
+            $('#exit-fee-wrap').addClass('d-none');
+            return;
+        }
+        if (data.ticket_type === 'monthly') {
+            $('#exit-fee-text').text('Vé tháng: 0 VNĐ');
+        } else {
+            $('#exit-fee-text').text('Giá tiền: ' + (data.fee_text || (Number(data.fee || 0).toLocaleString('vi-VN') + ' VNĐ')));
+        }
+        $('#exit-fee-wrap').removeClass('d-none');
+    }
+    function hideExitFee() {
+        $('#exit-fee-wrap').addClass('d-none');
+        $('#exit-fee-text').text('');
+    }
+    function lookupMonthlyIfReady() {
+        const code = ($('#entry-code').val() || '').trim().toUpperCase();
+        if (!code) {
+            lastLookupMonthly = '';
+            $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
+                .text('Để trống nếu vé ngày. Nhập đúng mã vé tháng sẽ hiện xanh.');
+            if (!$('#entry-validation-buttons').is(':visible')) $('#comp-in-reg-plate').text('-');
+            return;
+        }
+        if (code.length !== 6 || code === lastLookupMonthly) return;
+        lastLookupMonthly = code;
+        $.post(API.lookupMonthly, { code: code }).done(function(res) {
+            if (res && res.found) {
+                $('#entry-code-arm-hint').removeClass('text-muted text-danger').addClass('text-success')
+                    .text('Vé tháng ' + res.code + ' — BSX ' + (res.plate_number || ''));
+                $('#comp-in-reg-plate').text(res.plate_number || '-');
+            } else {
+                $('#entry-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
+                    .text((res && res.message) || 'Không tìm thấy vé tháng — sẽ tính vé ngày');
+                if (!$('#entry-validation-buttons').is(':visible')) $('#comp-in-reg-plate').text('-');
+            }
+        });
+    }
 
     // F5 (reload) mới hủy đối chiếu chưa xác nhận — không hủy khi chỉ tắt camera ĐT
     try {
@@ -262,6 +369,13 @@ $(document).ready(function() {
         $('#entry-placeholder').show();
         $('#entry-result, #entry-error').fadeOut();
         hideManualConfirm('entry');
+        $('#entry-validation-buttons').hide();
+        currentMonthlyLogId = null;
+        $('#comp-in-img').hide().attr('src', '');
+        $('#comp-in-empty').show();
+        $('#comp-in-plate').text('-');
+        if (!($('#entry-code').val() || '').trim()) $('#comp-in-reg-plate').text('-');
+        $('#comp-in-status-badge').removeClass('bg-danger text-white').addClass('bg-light text-primary').text('Chờ nhận diện xe vào');
     }
 
     function resetExitAndComparison() {
@@ -277,6 +391,7 @@ $(document).ready(function() {
         $('#exit-placeholder').show();
         $('#exit-result').hide();
         $('#exit-auto-timer-wrap').addClass('d-none');
+        hideExitFee();
         hideManualConfirm('exit');
         $('#comp-entry-img, #comp-exit-img').hide().attr('src', '');
         $('#comp-entry-empty, #comp-exit-empty').show();
@@ -319,6 +434,7 @@ $(document).ready(function() {
         entryCooldown = true;
         hideManualConfirm('entry');
         $('#entry-error').hide();
+        $('#entry-validation-buttons').hide();
         $('#entry-file, #btn-entry-recognize').prop('disabled', true);
         $('#btn-entry-recognize').html(entryBtnHtml(false));
         if (imageUrl) {
@@ -327,6 +443,12 @@ $(document).ready(function() {
         }
         $('#res-plate').text(plate || '');
         $('#res-code').text(code || '');
+        $('#comp-in-plate').text(plate || '-');
+        if (imageUrl) {
+            $('#comp-in-empty').hide();
+            $('#comp-in-img').attr('src', imageUrl).show();
+        }
+        $('#comp-in-status-badge').removeClass('bg-danger text-white').addClass('bg-light text-primary').text('Xe vào OK');
         $('#entry-result').fadeIn();
         if (entryTimerInterval) clearInterval(entryTimerInterval);
         let seconds = 10;
@@ -400,6 +522,7 @@ $(document).ready(function() {
             let seconds = 10;
             $('#exit-auto-timer').text(seconds);
             $('#exit-auto-timer-wrap').removeClass('d-none');
+            showExitFee(data);
             $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
                 .text('Biển khớp — tự động cho ra sau ' + seconds + 's');
             if (!data.already_out) {
@@ -428,6 +551,7 @@ $(document).ready(function() {
                 '<i class="material-icons-outlined align-middle me-1">warning</i> ' + (data.message || 'Biển số không khớp')
             );
             $('#exit-auto-timer-wrap').addClass('d-none');
+            hideExitFee();
             $('#comp-status-badge').removeClass('bg-warning bg-success text-dark').addClass('bg-danger text-white')
                 .text('BSX không trùng');
             $('#validation-buttons').show();
@@ -480,6 +604,8 @@ $(document).ready(function() {
     function submitEntry(imageSource) {
         const fd = new FormData();
         fd.append('image', imageSource);
+        const monthly = ($('#entry-code').val() || '').trim().toUpperCase();
+        if (monthly) fd.append('monthly_code', monthly);
         const btn = $('#btn-entry-recognize');
         btn.prop('disabled', true).html(entryBtnHtml(true));
         $('#entry-result, #entry-error').hide();
@@ -493,7 +619,23 @@ $(document).ready(function() {
             contentType: false,
             success: function(response) {
                 if (response.success) {
-                    showEntrySuccess(response.plate_number, response.code, response.image_url || null);
+                    if (response.monthly_pending) {
+                        currentMonthlyLogId = response.log_id;
+                        $('#comp-in-reg-plate').text(response.registered_plate || '-');
+                        $('#comp-in-plate').text(response.plate_number || '-');
+                        if (response.image_url) {
+                            $('#comp-in-empty').hide();
+                            $('#comp-in-img').attr('src', response.image_url).show();
+                            $('#entry-placeholder').hide();
+                            $('#entry-camera').attr('src', response.image_url).css('object-fit', 'contain').show();
+                        }
+                        $('#comp-in-status-badge').removeClass('bg-light text-primary').addClass('bg-danger text-white')
+                            .text('BSX không khớp vé tháng');
+                        $('#entry-validation-buttons').show();
+                        $('#entry-result').hide();
+                    } else {
+                        showEntrySuccess(response.plate_number, response.code, response.image_url || null);
+                    }
                 } else if (response.already_inside) {
                     showAlreadyInsideAlert(response);
                 } else {
@@ -551,7 +693,12 @@ $(document).ready(function() {
                             entry_image: response.entry_image,
                             exit_image: response.exit_image || null,
                             match: response.match === true || response.match === 1 || response.match === 'true',
-                            message: response.message
+                            message: response.message,
+                            ticket_type: response.ticket_type,
+                            fee: response.fee,
+                            fee_text: response.fee_text,
+                            hours: response.hours,
+                            already_out: response.already_out
                         });
                     } else {
                         showExitError(response.message || 'Có lỗi xảy ra', !!response.ocr_failed);
@@ -655,6 +802,9 @@ $(document).ready(function() {
         fd.append('image', fileInput.files[0]);
         if (side === 'exit') {
             fd.append('code', ($('#exit-code').val() || '').trim().toUpperCase());
+        } else {
+            const monthly = ($('#entry-code').val() || '').trim().toUpperCase();
+            if (monthly) fd.append('monthly_code', monthly);
         }
 
         $.ajax({
@@ -671,7 +821,20 @@ $(document).ready(function() {
                 }
                 hideManualConfirm(side);
                 if (side === 'entry') {
-                    showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url || null);
+                    if (res.monthly_pending) {
+                        currentMonthlyLogId = res.log_id;
+                        $('#comp-in-reg-plate').text(res.registered_plate || '-');
+                        $('#comp-in-plate').text(res.plate_number || '-');
+                        if (res.image_url) {
+                            $('#comp-in-empty').hide();
+                            $('#comp-in-img').attr('src', res.image_url).show();
+                        }
+                        $('#comp-in-status-badge').removeClass('bg-light text-primary').addClass('bg-danger text-white')
+                            .text('BSX không khớp vé tháng');
+                        $('#entry-validation-buttons').show();
+                    } else {
+                        showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url || null);
+                    }
                 } else {
                     showPendingValidation(res);
                 }
@@ -706,36 +869,95 @@ $(document).ready(function() {
 
     let pendingValidationAction = null;
     const confirmModalObj = new bootstrap.Modal(document.getElementById('confirmValidationModal'));
+    function openConfirm(kind, isValid) {
+        pendingValidationKind = kind;
+        pendingValidationAction = isValid;
+        if (isValid) {
+            $('#confirmModalHeader').removeClass('bg-danger').addClass('bg-success');
+            $('#confirmModalTitle').html('<span class="text-white"><i class="material-icons-outlined align-middle me-1">check_circle</i> Xác nhận Hợp Lệ</span>');
+            $('#confirmModalIcon').html('<i class="material-icons-outlined text-success" style="font-size: 70px;">check_circle_outline</i>');
+            $('#confirmModalQuestion').text(kind === 'monthly'
+                ? 'Xác nhận BSX HỢP LỆ với vé tháng và cho xe vào?'
+                : 'Xác nhận phương tiện HỢP LỆ và cho phép ra?');
+            $('#confirmModalSubmitBtn').removeClass('btn-danger').addClass('btn-success')
+                .text(kind === 'monthly' ? 'Đồng ý Cho Vào' : 'Đồng ý Cho Ra');
+        } else {
+            $('#confirmModalHeader').removeClass('bg-success').addClass('bg-danger');
+            $('#confirmModalTitle').html('<span class="text-white"><i class="material-icons-outlined align-middle me-1">warning</i> Xác nhận Không Hợp Lệ</span>');
+            $('#confirmModalIcon').html('<i class="material-icons-outlined text-danger" style="font-size: 70px;">gpp_bad</i>');
+            $('#confirmModalQuestion').text(kind === 'monthly'
+                ? 'Xác nhận KHÔNG HỢP LỆ — tính vé ngày cho lượt này?'
+                : 'Xác nhận phương tiện KHÔNG HỢP LỆ (Từ chối cho ra)?');
+            $('#confirmModalSubmitBtn').removeClass('btn-success').addClass('btn-danger')
+                .text(kind === 'monthly' ? 'Tính vé ngày' : 'Xác Nhận Từ Chối');
+        }
+        confirmModalObj.show();
+    }
     $('#btn-valid').click(function() {
         if (!currentLogId) return;
-        pendingValidationAction = true;
-        $('#confirmModalHeader').removeClass('bg-danger').addClass('bg-success');
-        $('#confirmModalTitle').html('<span class="text-white"><i class="material-icons-outlined align-middle me-1">check_circle</i> Xác nhận Hợp Lệ</span>');
-        $('#confirmModalIcon').html('<i class="material-icons-outlined text-success" style="font-size: 70px;">check_circle_outline</i>');
-        $('#confirmModalQuestion').text('Xác nhận phương tiện HỢP LỆ và cho phép ra?');
-        $('#confirmModalSubmitBtn').removeClass('btn-danger').addClass('btn-success').text('Đồng ý Cho Ra');
-        confirmModalObj.show();
+        openConfirm('exit', true);
     });
     $('#btn-invalid').click(function() {
         if (!currentLogId) return;
-        pendingValidationAction = false;
-        $('#confirmModalHeader').removeClass('bg-success').addClass('bg-danger');
-        $('#confirmModalTitle').html('<span class="text-white"><i class="material-icons-outlined align-middle me-1">warning</i> Xác nhận Không Hợp Lệ</span>');
-        $('#confirmModalIcon').html('<i class="material-icons-outlined text-danger" style="font-size: 70px;">gpp_bad</i>');
-        $('#confirmModalQuestion').text('Xác nhận phương tiện KHÔNG HỢP LỆ (Từ chối cho ra)?');
-        $('#confirmModalSubmitBtn').removeClass('btn-success').addClass('btn-danger').text('Xác Nhận Từ Chối');
-        confirmModalObj.show();
+        openConfirm('exit', false);
+    });
+    $('#btn-entry-valid').click(function() {
+        if (!currentMonthlyLogId) return;
+        openConfirm('monthly', true);
+    });
+    $('#btn-entry-invalid').click(function() {
+        if (!currentMonthlyLogId) return;
+        openConfirm('monthly', false);
     });
     $('#confirmModalSubmitBtn').click(function() {
-        if (pendingValidationAction === null || !currentLogId) return;
+        if (pendingValidationAction === null) return;
         const isValid = pendingValidationAction;
+        const kind = pendingValidationKind;
         const btnSubmit = $(this);
         btnSubmit.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span> Đang xử lý...');
+        if (kind === 'monthly') {
+            $.post(API.validateMonthly, { log_id: currentMonthlyLogId, is_valid: isValid }, function(res) {
+                confirmModalObj.hide();
+                if (res.success) {
+                    $('#entry-validation-buttons').hide();
+                    currentMonthlyLogId = null;
+                    showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url);
+                } else {
+                    showNotificationModal(false, 'Thao Tác Thất Bại', res.message);
+                }
+            }).always(function() {
+                btnSubmit.prop('disabled', false).text(isValid ? 'Đồng ý Cho Vào' : 'Tính vé ngày');
+            });
+            return;
+        }
+        if (!currentLogId) return;
         $.post(API.validate, { log_id: currentLogId, is_valid: isValid }, function(res) {
             confirmModalObj.hide();
             if (res.success) {
-                showNotificationModal(isValid, isValid ? 'Đã Cho Phép Xe Ra!' : 'Đã Từ Chối Phương Tiện!', res.message);
-                resetExitAndComparison();
+                if (isValid) {
+                    $('#validation-buttons').hide();
+                    const alertBox = $('#exit-alert-box');
+                    alertBox.removeClass('alert-danger alert-info').addClass('alert-success');
+                    $('#exit-message').html('<i class="material-icons-outlined align-middle me-1">check_circle</i> Đã cho phép xe ra!');
+                    showExitFee(res);
+                    let seconds = 10;
+                    $('#exit-auto-timer').text(seconds);
+                    $('#exit-auto-timer-wrap').removeClass('d-none');
+                    $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
+                        .text('Đã cho ra thành công');
+                    if (exitTimerInterval) clearInterval(exitTimerInterval);
+                    exitTimerInterval = setInterval(function() {
+                        seconds--;
+                        $('#exit-auto-timer').text(seconds);
+                        if (seconds <= 0) {
+                            clearExitTimer();
+                            setTimeout(resetExitAndComparison, 400);
+                        }
+                    }, 1000);
+                } else {
+                    showNotificationModal(false, 'Đã Từ Chối Phương Tiện!', res.message);
+                    resetExitAndComparison();
+                }
             } else {
                 showNotificationModal(false, 'Thao Tác Thất Bại', res.message);
             }
@@ -746,6 +968,11 @@ $(document).ready(function() {
 
     $('#exit-code').on('input', function() {
         this.value = (this.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+    });
+    $('#entry-code').on('input', function() {
+        this.value = (this.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+        lastLookupMonthly = '';
+        lookupMonthlyIfReady();
     });
 });
 </script>

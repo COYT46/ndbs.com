@@ -30,7 +30,16 @@ Route::middleware(['auth', 'account.active'])->group(function () {
         Route::put('/guard/{id}', [ManagerController::class, 'updateGuard'])->name('manager.guard.update');
         Route::patch('/guard/{id}/toggle-status', [ManagerController::class, 'toggleStatusGuard'])->name('manager.guard.toggle_status');
         Route::delete('/guard/{id}', [ManagerController::class, 'deleteGuard'])->name('manager.guard.delete');
+        Route::get('/ticket-prices', [ManagerController::class, 'ticketPrices'])->name('manager.ticket_prices');
+        Route::post('/ticket-prices', [ManagerController::class, 'saveTicketPrices'])->name('manager.ticket_prices.save');
+        Route::get('/monthly-tickets', [\App\Http\Controllers\MonthlyTicketController::class, 'index'])->name('manager.monthly_tickets');
+        Route::post('/monthly-tickets', [\App\Http\Controllers\MonthlyTicketController::class, 'store'])->name('manager.monthly_tickets.store');
+        Route::put('/monthly-tickets/{id}', [\App\Http\Controllers\MonthlyTicketController::class, 'update'])->name('manager.monthly_tickets.update');
+        Route::patch('/monthly-tickets/{id}/toggle-status', [\App\Http\Controllers\MonthlyTicketController::class, 'toggleStatus'])->name('manager.monthly_tickets.toggle_status');
+        Route::delete('/monthly-tickets/{id}', [\App\Http\Controllers\MonthlyTicketController::class, 'destroy'])->name('manager.monthly_tickets.delete');
+        Route::post('/monthly-tickets/{id}/renew', [\App\Http\Controllers\MonthlyTicketController::class, 'renew'])->name('manager.monthly_tickets.renew');
         Route::get('/vehicle-logs', [ManagerController::class, 'vehicleLogs'])->name('manager.vehicle_logs');
+        Route::get('/monthly-vehicle-logs', [ManagerController::class, 'monthlyVehicleLogs'])->name('manager.monthly_vehicle_logs');
     });
 
     // Guard Routes

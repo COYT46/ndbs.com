@@ -160,6 +160,13 @@ if (! function_exists('timeAgo')) {
     }
 }
 
+if (! function_exists('format_vnd')) {
+    function format_vnd($amount)
+    {
+        return number_format((int) $amount, 0, ',', '.') . ' VNĐ';
+    }
+}
+
 if(! function_exists('getLastTwoPartsOfName')) {
     function getLastTwoPartsOfName($fullName) {
         $parts = explode(' ', trim($fullName));

@@ -1,11 +1,11 @@
 @extends('layouts.app')
 
-@section('title', 'Lịch sử ra vào phương tiện')
+@section('title', 'Lịch sử ra vào vé tháng')
 
 @section('content')
 <div class="card shadow-sm border-0">
     <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-        <h4 class="mb-0 fw-bold text-primary"><i class="material-icons-outlined align-middle me-2">history</i> Lịch sử ra vào của phương tiện</h4>
+        <h4 class="mb-0 fw-bold text-primary"><i class="material-icons-outlined align-middle me-2">event_note</i> Lịch sử ra vào vé tháng</h4>
         {{-- <button type="button" class="btn btn-outline-primary fw-bold d-inline-flex align-items-center shadow-sm" onclick="refreshVehicleLogsWithFetch(true)">
             <i class="material-icons-outlined align-middle me-1">sync</i> Làm mới (Fetch)
         </button> --}}
@@ -46,7 +46,7 @@
                             @foreach($pendingLogs as $index => $log)
                             <tr>
                                 <td class="text-center">{{ $index + 1 }}</td>
-                                <td><span class="badge bg-primary fs-6">{{ $log->code }}</span></td>
+                                <td><span class="badge bg-primary fs-6">{{ $log->monthlyTicket?->code ?? $log->code }}</span></td>
                                 <td><strong class="text-danger fs-6">{{ $log->plate_number }}</strong></td>
                                 <td>{{ \Carbon\Carbon::parse($log->entry_time)->format('d/m/Y H:i:s') }}</td>
                                 <td class="text-center">
@@ -60,7 +60,7 @@
                                         <div class="modal-dialog modal-lg modal-dialog-centered">
                                             <div class="modal-content text-start">
                                                 <div class="modal-header bg-info text-white">
-                                                    <h5 class="modal-title text-white">Chi tiết phương tiện vào (Mã code: {{ $log->code }})</h5>
+                                                    <h5 class="modal-title text-white">Chi tiết phương tiện vào (Mã vé tháng: {{ $log->monthlyTicket?->code ?? $log->code }})</h5>
                                                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                                                 </div>
                                                 <div class="modal-body">
@@ -78,7 +78,7 @@
                                                         <div class="col-12 col-md-6 d-flex flex-column justify-content-center">
                                                             <ul class="list-group list-group-flush fs-6">
                                                                 <li class="list-group-item d-flex justify-content-between">
-                                                                    <span>Mã code:</span> <strong class="text-primary">{{ $log->code }}</strong>
+                                                                    <span>Mã vé tháng:</span> <strong class="text-primary">{{ $log->monthlyTicket?->code ?? $log->code }}</strong>
                                                                 </li>
                                                                 <li class="list-group-item d-flex justify-content-between">
                                                                     <span>BSX vào:</span> <strong class="text-danger fs-5">{{ $log->plate_number }}</strong>
@@ -135,12 +135,12 @@
                             @foreach($completedLogs as $index => $log)
                             <tr>
                                 <td class="text-center">{{ $index + 1 }}</td>
-                                <td><span class="badge bg-primary fs-6">{{ $log->code }}</span></td>
+                                <td><span class="badge bg-primary fs-6">{{ $log->monthlyTicket?->code ?? $log->code }}</span></td>
                                 <td><strong class="text-danger">{{ $log->plate_number }}</strong></td>
                                 <td>{{ \Carbon\Carbon::parse($log->entry_time)->format('d/m/Y H:i:s') }}</td>
                                 <td><strong class="text-success">{{ $log->exit_plate_number ?? $log->plate_number }}</strong></td>
                                 <td>{{ $log->exit_time ? \Carbon\Carbon::parse($log->exit_time)->format('d/m/Y H:i:s') : '-' }}</td>
-                                <td><strong>{{ format_vnd($log->fee ?? 0) }}</strong></td>
+                                <td><strong>Vé tháng</strong></td>
                                 <td class="text-center">
                                     <button type="button" class="btn btn-sm btn-info text-white d-inline-flex align-items-center"
                                         data-bs-toggle="modal" data-bs-target="#viewCompletedModal{{ $log->id }}" title="Xem chi tiết">
@@ -152,7 +152,7 @@
                                         <div class="modal-dialog modal-xl">
                                             <div class="modal-content text-start">
                                                 <div class="modal-header bg-success text-white">
-                                                    <h5 class="modal-title text-white">Chi tiết phương tiện đã ra (Mã code: {{ $log->code }})</h5>
+                                                    <h5 class="modal-title text-white">Chi tiết phương tiện đã ra (Mã vé tháng: {{ $log->monthlyTicket?->code ?? $log->code }})</h5>
                                                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                                                 </div>
                                                 <div class="modal-body">
@@ -169,7 +169,7 @@
                                                             </div>
                                                             <ul class="list-group list-group-flush fs-6">
                                                                 <li class="list-group-item d-flex justify-content-between">
-                                                                    <span>Mã code:</span> <strong class="text-primary">{{ $log->code }}</strong>
+                                                                    <span>Mã vé tháng:</span> <strong class="text-primary">{{ $log->monthlyTicket?->code ?? $log->code }}</strong>
                                                                 </li>
                                                                 <li class="list-group-item d-flex justify-content-between">
                                                                     <span>BSX vào:</span> <strong class="text-danger fs-5">{{ $log->plate_number }}</strong>
@@ -207,7 +207,7 @@
                                                                     <span>Bảo vệ check-out:</span> <strong class="text-dark">{{ $log->guardOut->fullname ?? 'N/A' }}</strong>
                                                                 </li>
                                                                 <li class="list-group-item d-flex justify-content-between">
-                                                                    <span>Giá tiền:</span> <strong class="text-danger">{{ format_vnd($log->fee ?? 0) }}</strong>
+                                                                    <span>Giá tiền:</span> <strong class="text-danger">Vé tháng</strong>
                                                                 </li>
                                                             </ul>
                                                         </div>
@@ -271,7 +271,7 @@
             // Nếu người dùng đang đặt con trỏ chuột trong ô tìm kiếm (đang gõ dở) thì tạm dừng refresh ngầm
             if (!force && $('input[type="search"]').is(':focus')) return;
 
-            fetch('{{ route("api.recent_logs") }}?type=daily', {
+            fetch('{{ route("api.recent_logs") }}?type=monthly', {
                     method: 'GET',
                     headers: {
                         'Accept': 'application/json',
@@ -300,11 +300,12 @@
                         let pendingHtml = '';
                         let modalsHtml = '';
                         res.pending.forEach((log, idx) => {
+                            const code = log.monthly_code || log.code;
                             let imgTag = log.entry_image ? `<img src="${log.entry_image}" class="img-fluid rounded" style="max-height: 100%;">` : `<span class="text-muted">Không có ảnh</span>`;
                             let badgeStatus = (log.is_valid === 0 || log.is_valid === false) ? `<span class="badge bg-danger">Không hợp lệ</span>` : `<span class="badge bg-warning text-dark">Chưa ra</span>`;
                             pendingHtml += `<tr>
                                 <td class="text-center">${idx + 1}</td>
-                                <td><span class="badge bg-primary fs-6">${log.code}</span></td>
+                                <td><span class="badge bg-primary fs-6">${code}</span></td>
                                 <td><strong class="text-danger fs-6">${log.plate_number}</strong></td>
                                 <td>${log.entry_time}</td>
                                 <td class="text-center">
@@ -319,7 +320,7 @@
                                 <div class="modal-dialog modal-lg modal-dialog-centered">
                                     <div class="modal-content text-start">
                                         <div class="modal-header bg-info text-white">
-                                            <h5 class="modal-title text-white">Chi tiết phương tiện vào (Mã code: ${log.code})</h5>
+                                            <h5 class="modal-title text-white">Chi tiết phương tiện vào (Mã vé tháng: ${code})</h5>
                                             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                                         </div>
                                         <div class="modal-body">
@@ -332,7 +333,7 @@
                                                 </div>
                                                 <div class="col-12 col-md-6 d-flex flex-column justify-content-center">
                                                     <ul class="list-group list-group-flush fs-6">
-                                                        <li class="list-group-item d-flex justify-content-between"><span>Mã code:</span> <strong class="text-primary">${log.code}</strong></li>
+                                                        <li class="list-group-item d-flex justify-content-between"><span>Mã vé tháng:</span> <strong class="text-primary">${code}</strong></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>BSX vào:</span> <strong class="text-danger fs-5">${log.plate_number}</strong></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>Thời gian vào:</span> <span>${log.entry_time}</span></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>Bảo vệ check-in:</span> <strong class="text-dark">${log.guard_in}</strong></li>
@@ -351,17 +352,18 @@
 
                         let completedHtml = '';
                         res.completed.forEach((log, idx) => {
+                            const code = log.monthly_code || log.code;
                             let entryImgTag = log.entry_image ? `<img src="${log.entry_image}" class="img-fluid rounded" style="max-height: 100%;">` : `<span class="text-muted">Không có ảnh vào</span>`;
                             let exitImgTag = log.exit_image ? `<img src="${log.exit_image}" class="img-fluid rounded" style="max-height: 100%;">` : `<span class="text-muted">Không có ảnh ra</span>`;
 
                             completedHtml += `<tr>
                                 <td class="text-center">${idx + 1}</td>
-                                <td><span class="badge bg-primary fs-6">${log.code}</span></td>
+                                <td><span class="badge bg-primary fs-6">${code}</span></td>
                                 <td><strong class="text-danger">${log.plate_number}</strong></td>
                                 <td>${log.entry_time}</td>
                                 <td><strong class="text-success">${log.exit_plate_number || log.plate_number}</strong></td>
                                 <td>${log.exit_time || '-'}</td>
-                                <td><strong>${log.fee_text || '0 VNĐ'}</strong></td>
+                                <td><strong>Vé tháng</strong></td>
                                 <td class="text-center">
                                     <button type="button" class="btn btn-sm btn-info text-white d-inline-flex align-items-center"
                                         data-bs-toggle="modal" data-bs-target="#viewCompletedModal${log.id}" title="Xem chi tiết">
@@ -374,7 +376,7 @@
                                 <div class="modal-dialog modal-xl">
                                     <div class="modal-content text-start">
                                         <div class="modal-header bg-success text-white">
-                                            <h5 class="modal-title text-white">Chi tiết phương tiện đã ra (Mã code: ${log.code})</h5>
+                                            <h5 class="modal-title text-white">Chi tiết phương tiện đã ra (Mã vé tháng: ${code})</h5>
                                             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                                         </div>
                                         <div class="modal-body">
@@ -385,7 +387,7 @@
                                                         ${entryImgTag}
                                                     </div>
                                                     <ul class="list-group list-group-flush fs-6">
-                                                        <li class="list-group-item d-flex justify-content-between"><span>Mã code:</span> <strong class="text-primary">${log.code}</strong></li>
+                                                        <li class="list-group-item d-flex justify-content-between"><span>Mã vé tháng:</span> <strong class="text-primary">${code}</strong></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>BSX vào:</span> <strong class="text-danger fs-5">${log.plate_number}</strong></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>Thời gian vào:</span> <span>${log.entry_time}</span></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>Bảo vệ check-in:</span> <strong class="text-dark">${log.guard_in}</strong></li>
@@ -401,7 +403,7 @@
                                                         <li class="list-group-item d-flex justify-content-between"><span>BSX ra:</span> <strong class="text-success fs-5">${log.exit_plate_number || log.plate_number}</strong></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>Thời gian ra:</span> <span>${log.exit_time || '-'}</span></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>Bảo vệ check-out:</span> <strong class="text-dark">${log.guard_out}</strong></li>
-                                                        <li class="list-group-item d-flex justify-content-between"><span>Giá tiền:</span> <strong class="text-danger">${log.fee_text || '0 VNĐ'}</strong></li>
+                                                        <li class="list-group-item d-flex justify-content-between"><span>Giá tiền:</span> <strong class="text-danger">Vé tháng</strong></li>
                                                     </ul>
                                                 </div>
                                             </div>
@@ -434,7 +436,7 @@
         }
 
         $(document).ready(function() {
-            const TAB_KEY = 'vehicle_logs_active_tab';
+            const TAB_KEY = 'monthly_vehicle_logs_active_tab';
 
             // Khôi phục tab sau F5
             const savedTab = localStorage.getItem(TAB_KEY);

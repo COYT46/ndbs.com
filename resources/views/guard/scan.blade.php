@@ -930,6 +930,14 @@ $(document).ready(function() {
             contentType: false
         }).done(function(res) {
             if (res && res.success) {
+                if (res.monthly_pending) {
+                    showResult(true,
+                        '<strong>Chờ xác nhận vé tháng</strong><br>Biển: <b>' + (res.plate_number || plateHint) +
+                        '</b><br>' + (res.message || 'BSX không khớp — chờ máy tính xác nhận.')
+                    );
+                    holdForFrontendCountdown(res.pause_ocr_s || FRONTEND_HOLD_S);
+                    return;
+                }
                 showResult(true,
                     '<strong>Xe vào OK</strong><br>Biển: <b>' + (res.plate_number || plateHint) +
                     '</b><br>Mã code: <b class="text-primary">' + res.code + '</b>'

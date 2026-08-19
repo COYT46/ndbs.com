@@ -8,9 +8,42 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 
 use App\Models\VehicleLog;
+use App\Models\Setting;
 
 class ManagerController extends Controller
 {
+    public function ticketPrices()
+    {
+        if (auth()->user()->role !== 'manager') return redirect('/');
+
+        return view('manager.ticket_prices', [
+            'dailyPrice' => Setting::dailyPricePerHour(),
+            'monthlyPrice' => Setting::monthlyPricePerMonth(),
+        ]);
+    }
+
+    public function saveTicketPrices(Request $request)
+    {
+        if (auth()->user()->role !== 'manager') return redirect('/');
+
+        $request->validate([
+            'daily_price_per_hour' => 'required|numeric|min:1',
+            'monthly_price_per_month' => 'required|numeric|min:1',
+        ], [
+            'daily_price_per_hour.required' => 'Vui lòng nhập giá vé ngày.',
+            'daily_price_per_hour.numeric' => 'Giá vé ngày phải là số.',
+            'daily_price_per_hour.min' => 'Giá vé ngày phải lớn hơn 0.',
+            'monthly_price_per_month.required' => 'Vui lòng nhập giá vé tháng.',
+            'monthly_price_per_month.numeric' => 'Giá vé tháng phải là số.',
+            'monthly_price_per_month.min' => 'Giá vé tháng phải lớn hơn 0.',
+        ]);
+
+        Setting::setValue('daily_price_per_hour', (int) $request->daily_price_per_hour);
+        Setting::setValue('monthly_price_per_month', (int) $request->monthly_price_per_month);
+
+        return redirect()->back()->with('success', 'Đã lưu cài đặt giá vé.');
+    }
+
     public function dashboard()
     {
         if (auth()->user()->role !== 'manager') return redirect('/');
@@ -121,6 +154,9 @@ class ManagerController extends Controller
         if (auth()->user()->role !== 'manager') return redirect('/');
 
         $pendingLogs = VehicleLog::with('guardIn')
+            ->where(function ($q) {
+                $q->where('ticket_type', 'daily')->orWhereNull('ticket_type');
+            })
             ->where(function ($query) {
                 $query->where('status', 'in')->orWhere('is_valid', false);
             })
@@ -128,6 +164,9 @@ class ManagerController extends Controller
             ->get();
 
         $completedLogs = VehicleLog::with(['guardIn', 'guardOut'])
+            ->where(function ($q) {
+                $q->where('ticket_type', 'daily')->orWhereNull('ticket_type');
+            })
             ->where('status', 'out')
             ->where(function ($query) {
                 $query->whereNull('is_valid')->orWhere('is_valid', true);
@@ -136,5 +175,29 @@ class ManagerController extends Controller
             ->get();
 
         return view('manager.vehicle_logs', compact('pendingLogs', 'completedLogs'));
+    }
+
+    public function monthlyVehicleLogs()
+    {
+        if (auth()->user()->role !== 'manager') return redirect('/');
+
+        $pendingLogs = VehicleLog::with(['guardIn', 'monthlyTicket'])
+            ->where('ticket_type', 'monthly')
+            ->where(function ($query) {
+                $query->where('status', 'in')->orWhere('is_valid', false);
+            })
+            ->orderBy('entry_time', 'desc')
+            ->get();
+
+        $completedLogs = VehicleLog::with(['guardIn', 'guardOut', 'monthlyTicket'])
+            ->where('ticket_type', 'monthly')
+            ->where('status', 'out')
+            ->where(function ($query) {
+                $query->whereNull('is_valid')->orWhere('is_valid', true);
+            })
+            ->orderBy('exit_time', 'desc')
+            ->get();
+
+        return view('manager.monthly_vehicle_logs', compact('pendingLogs', 'completedLogs'));
     }
 }

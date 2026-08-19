@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\VehicleLog;
+use App\Models\MonthlyTicket;
+use App\Services\ParkingFee;
 use Illuminate\Support\Str;
 
 class ApiController extends Controller
@@ -103,6 +105,149 @@ class ApiController extends Controller
         } while (VehicleLog::where('code', $code)->exists());
 
         return $code;
+    }
+
+    private function armedMonthlyCodePath()
+    {
+        return $this->monitorStateDir() . DIRECTORY_SEPARATOR . 'armed_monthly_code.json';
+    }
+
+    private function writeArmedMonthlyCode(MonthlyTicket $ticket): void
+    {
+        @file_put_contents($this->armedMonthlyCodePath(), json_encode([
+            'code' => $ticket->code,
+            'ticket_id' => $ticket->id,
+            'plate_number' => $ticket->plate_number,
+            'ts' => time(),
+        ], JSON_UNESCAPED_UNICODE));
+    }
+
+    private function clearArmedMonthlyCode(): void
+    {
+        $path = $this->armedMonthlyCodePath();
+        if (is_file($path)) {
+            @unlink($path);
+        }
+    }
+
+    private function readArmedMonthlyPayload(): ?array
+    {
+        $path = $this->armedMonthlyCodePath();
+        if (!is_file($path)) {
+            return null;
+        }
+        $data = json_decode((string) @file_get_contents($path), true);
+        if (!is_array($data) || empty($data['code'])) {
+            return null;
+        }
+        if ((time() - (int) ($data['ts'] ?? 0)) > 3600) {
+            @unlink($path);
+            return null;
+        }
+        return $data;
+    }
+
+    private function resolveMonthlyTicket(Request $request): ?MonthlyTicket
+    {
+        $code = strtoupper(trim((string) $request->input('monthly_code', '')));
+        if ($code === '') {
+            $armed = $this->readArmedMonthlyPayload();
+            $code = strtoupper(trim((string) ($armed['code'] ?? '')));
+        }
+        if ($code === '') {
+            return null;
+        }
+        return MonthlyTicket::findUsableByCode($code);
+    }
+
+    private function findOpenLogByCode(string $code): ?VehicleLog
+    {
+        $code = strtoupper(trim($code));
+        $log = VehicleLog::where('code', $code)
+            ->where(function ($q) {
+                $q->where('status', 'in')->orWhere('is_valid', false);
+            })
+            ->latest()
+            ->first();
+        if ($log) {
+            return $log;
+        }
+        if (!preg_match('/^[A-Z]\d{5}$/', $code)) {
+            return null;
+        }
+        $ticket = MonthlyTicket::notDeleted()->where('code', $code)->first();
+        if (!$ticket) {
+            return null;
+        }
+        return VehicleLog::where('monthly_ticket_id', $ticket->id)
+            ->where(function ($q) {
+                $q->where('status', 'in')->orWhere('is_valid', false);
+            })
+            ->latest()
+            ->first();
+    }
+
+    private function feePayload(VehicleLog $log, ?array $calc = null): array
+    {
+        $isMonthly = ($log->ticket_type ?? 'daily') === 'monthly';
+        $fee = $calc['fee'] ?? (int) ($log->fee ?? 0);
+        $hours = $calc['hours'] ?? null;
+        return [
+            'ticket_type' => $isMonthly ? 'monthly' : 'daily',
+            'fee' => $fee,
+            'fee_text' => ParkingFee::formatVnd($fee),
+            'hours' => $hours,
+            'monthly_code' => $isMonthly && $log->monthlyTicket ? $log->monthlyTicket->code : null,
+        ];
+    }
+
+    private function monthlyLookupResponse(?string $code)
+    {
+        $code = strtoupper(trim((string) $code));
+        if ($code === '') {
+            return [
+                'success' => true,
+                'found' => false,
+                'empty' => true,
+                'message' => 'Không nhập mã — tính vé ngày.',
+            ];
+        }
+
+        $ticket = MonthlyTicket::notDeleted()->where('code', $code)->first();
+        if (!$ticket) {
+            return [
+                'success' => true,
+                'found' => false,
+                'code' => $code,
+                'message' => 'Không tìm thấy vé tháng — sẽ tính vé ngày.',
+            ];
+        }
+        if ($ticket->deleted || !$ticket->is_active) {
+            return [
+                'success' => true,
+                'found' => false,
+                'code' => $code,
+                'message' => 'Vé tháng đã vô hiệu hóa — sẽ tính vé ngày.',
+            ];
+        }
+        if ($ticket->isExpired()) {
+            return [
+                'success' => true,
+                'found' => false,
+                'code' => $code,
+                'message' => 'Vé tháng đã hết hạn — sẽ tính vé ngày.',
+            ];
+        }
+
+        return [
+            'success' => true,
+            'found' => true,
+            'code' => $ticket->code,
+            'ticket_id' => $ticket->id,
+            'plate_number' => $ticket->plate_number,
+            'expires_on' => $ticket->expires_on->format('d/m/Y'),
+            'message' => 'Đã tìm thấy vé tháng ' . $ticket->code,
+        ];
     }
 
     /**
@@ -757,26 +902,50 @@ class ApiController extends Controller
             }
 
             $code = $this->generateUniqueVehicleCode();
+            $monthlyTicket = $this->resolveMonthlyTicket($request);
+            $isMonthly = (bool) $monthlyTicket;
+            $monthlyMatch = $isMonthly ? $this->platesMatch($monthlyTicket->plate_number, $plate) : null;
 
-            // Save log
             $log = VehicleLog::create([
                 'plate_number' => $plate,
                 'code' => $code,
+                'ticket_type' => $isMonthly ? 'monthly' : 'daily',
+                'monthly_ticket_id' => $isMonthly ? $monthlyTicket->id : null,
                 'status' => 'in',
                 'entry_time' => now(),
                 'entry_image' => $relativePath,
-                'guard_in_id' => auth()->id()
+                'guard_in_id' => auth()->id(),
+                'monthly_match' => $monthlyMatch,
+                'monthly_confirmed' => $isMonthly ? ($monthlyMatch ? true : null) : null,
+                'fee' => $isMonthly ? 0 : null,
             ]);
 
+            if ($isMonthly) {
+                $this->clearArmedMonthlyCode();
+            }
+
             $this->writeManualOcrPause(10);
+
+            $displayCode = $isMonthly ? $monthlyTicket->code : $code;
+            $pendingMonthly = $isMonthly && !$monthlyMatch;
 
             return response()->json([
                 'success' => true,
                 'log_id' => $log->id,
                 'plate_number' => $plate,
-                'code' => $code,
+                'code' => $displayCode,
+                'visit_code' => $code,
+                'ticket_type' => $isMonthly ? 'monthly' : 'daily',
+                'monthly_code' => $isMonthly ? $monthlyTicket->code : null,
+                'registered_plate' => $isMonthly ? $monthlyTicket->plate_number : null,
+                'monthly_match' => $monthlyMatch,
+                'monthly_pending' => $pendingMonthly,
                 'image_url' => asset($relativePath),
-                'message' => 'Nhận diện thành công. Xe đã vào.',
+                'message' => $pendingMonthly
+                    ? ('Biển số nhận diện (' . $plate . ') không khớp biển đăng ký vé tháng (' . $monthlyTicket->plate_number . '). Vui lòng xác nhận.')
+                    : ($isMonthly
+                        ? ('Nhận diện thành công. Xe vé tháng ' . $monthlyTicket->code . ' đã vào.')
+                        : 'Nhận diện thành công. Xe đã vào.'),
                 'pause_ocr_s' => 10,
             ]);
         } catch (\Exception $e) {
@@ -809,12 +978,7 @@ class ApiController extends Controller
                 ]);
             }
 
-            $log = VehicleLog::where('code', $code)
-                ->where(function ($q) {
-                    $q->where('status', 'in')->orWhere('is_valid', false);
-                })
-                ->latest()
-                ->first();
+            $log = $this->findOpenLogByCode($code);
 
             if (!$log) {
                 // Sai mã → tắt kích hoạt để PC/ĐT nhập lại từ đầu
@@ -858,14 +1022,17 @@ class ApiController extends Controller
 
             if ($isMatch) {
                 // Biển khớp → đổi in → out ngay (không đợi đếm 10s trên frontend / F5)
-                $log->update([
+                $exitAt = now();
+                $calc = ParkingFee::applyOnCheckout($log, $exitAt);
+                $log->fill([
                     'status' => 'out',
-                    'exit_time' => now(),
+                    'exit_time' => $exitAt,
                     'exit_image' => $relativePath,
                     'exit_plate_number' => $exitPlate,
                     'guard_out_id' => auth()->id(),
                     'is_valid' => true,
                 ]);
+                $log->save();
                 $this->clearLocalArmedExitCodeOnly();
                 $this->releaseGlobalArmedCode(strtoupper((string) $log->code));
             } else {
@@ -884,7 +1051,15 @@ class ApiController extends Controller
 
             $this->writeManualOcrPause(10);
 
-            return response()->json([
+            $log->load('monthlyTicket');
+            $hours = 0;
+            if ($isMatch) {
+                $hours = ($log->ticket_type === 'monthly')
+                    ? 0
+                    : ParkingFee::billedHours($log->entry_time, $log->exit_time ?: now());
+            }
+
+            return response()->json(array_merge([
                 'success' => true,
                 'match' => $isMatch,
                 'log_id' => $log->id,
@@ -898,7 +1073,10 @@ class ApiController extends Controller
                 'message' => $isMatch
                     ? ('Biển số khớp: ' . $exitPlate)
                     : ('Biển số xe ra (' . $exitPlate . ') không khớp với xe vào (' . $log->plate_number . '). Vui lòng xác nhận.')
-            ]);
+            ], $this->feePayload($log, $isMatch ? [
+                'fee' => (int) ($log->fee ?? 0),
+                'hours' => $hours,
+            ] : ['fee' => 0, 'hours' => 0])));
         } catch (\Exception $e) {
             $msg = $e->getMessage();
             if (!mb_check_encoding($msg, 'UTF-8')) {
@@ -929,26 +1107,48 @@ class ApiController extends Controller
 
         $plate = $this->unrecognizedPlateLabel();
         $code = $this->generateUniqueVehicleCode();
+        $monthlyTicket = $this->resolveMonthlyTicket($request);
+        $isMonthly = (bool) $monthlyTicket;
+        $monthlyMatch = $isMonthly ? false : null;
 
         $log = VehicleLog::create([
             'plate_number' => $plate,
             'code' => $code,
+            'ticket_type' => $isMonthly ? 'monthly' : 'daily',
+            'monthly_ticket_id' => $isMonthly ? $monthlyTicket->id : null,
             'status' => 'in',
             'entry_time' => now(),
             'entry_image' => $relativePath,
             'guard_in_id' => auth()->id(),
+            'monthly_match' => $monthlyMatch,
+            'monthly_confirmed' => $isMonthly ? null : null,
+            'fee' => $isMonthly ? 0 : null,
         ]);
 
+        if ($isMonthly) {
+            $this->clearArmedMonthlyCode();
+        }
+
         $this->writeManualOcrPause(10);
+
+        $displayCode = $isMonthly ? $monthlyTicket->code : $code;
 
         return response()->json([
             'success' => true,
             'unrecognized' => true,
             'log_id' => $log->id,
             'plate_number' => $plate,
-            'code' => $code,
+            'code' => $displayCode,
+            'visit_code' => $code,
+            'ticket_type' => $isMonthly ? 'monthly' : 'daily',
+            'monthly_code' => $isMonthly ? $monthlyTicket->code : null,
+            'registered_plate' => $isMonthly ? $monthlyTicket->plate_number : null,
+            'monthly_match' => $monthlyMatch,
+            'monthly_pending' => $isMonthly,
             'image_url' => asset($relativePath),
-            'message' => 'Xe đã vào thành công.',
+            'message' => $isMonthly
+                ? 'Đã chụp xe vào (không thể nhận diện biển). Vui lòng xác nhận Hợp lệ / Không hợp lệ với vé tháng.'
+                : 'Xe đã vào thành công.',
             'pause_ocr_s' => 10,
         ]);
     }
@@ -967,12 +1167,7 @@ class ApiController extends Controller
             ]);
         }
 
-        $log = VehicleLog::where('code', $code)
-            ->where(function ($q) {
-                $q->where('status', 'in')->orWhere('is_valid', false);
-            })
-            ->latest()
-            ->first();
+        $log = $this->findOpenLogByCode($code);
 
         if (!$log) {
             $this->clearArmedExitCodeStorage();
@@ -1100,28 +1295,37 @@ class ApiController extends Controller
         if ($isValid) {
             // Đã cho ra rồi (bấm F5 lúc đang đếm) → không đổi lại
             if ((string) $log->status === 'out' && $log->is_valid) {
-                return response()->json([
+                $log->load('monthlyTicket');
+                return response()->json(array_merge([
                     'success' => true,
                     'message' => 'Đã xác nhận Hợp lệ! Xe đã chuyển sang danh sách xe vào đã ra.'
-                ]);
+                ], $this->feePayload($log, [
+                    'fee' => (int) ($log->fee ?? 0),
+                    'hours' => ($log->ticket_type === 'monthly') ? 0 : ParkingFee::billedHours($log->entry_time, $log->exit_time ?: now()),
+                ])));
             }
 
-            // Hợp lệ → chuyển sang danh sách "Xe vào đã ra"
-            $log->update([
+            $exitAt = now();
+            ParkingFee::applyOnCheckout($log, $exitAt);
+            $log->fill([
                 'status' => 'out',
-                'exit_time' => now(),
+                'exit_time' => $exitAt,
                 'guard_out_id' => auth()->id(),
                 'is_valid' => true
             ]);
+            $log->save();
 
-            // Nhả khóa — tài khoản khác sẽ nhận "Mã không tồn tại"
             $this->clearLocalArmedExitCodeOnly();
             $this->releaseGlobalArmedCode(strtoupper((string) $log->code));
 
-            return response()->json([
+            $log->load('monthlyTicket');
+            return response()->json(array_merge([
                 'success' => true,
                 'message' => 'Đã xác nhận Hợp lệ! Xe đã chuyển sang danh sách xe vào đã ra.'
-            ]);
+            ], $this->feePayload($log, [
+                'fee' => (int) ($log->fee ?? 0),
+                'hours' => ($log->ticket_type === 'monthly') ? 0 : ParkingFee::billedHours($log->entry_time, $log->exit_time),
+            ])));
         }
 
         // Không hợp lệ → giữ trong danh sách "Xe vào chưa ra", xóa ảnh ra để có thể quét lại
@@ -1205,9 +1409,24 @@ class ApiController extends Controller
         $user = auth()->user();
         $uid = $user ? (int) $user->id : 0;
         $isManager = ($user->role ?? null) === 'manager';
+        $ticketType = request()->query('type', 'daily');
+        if (!in_array($ticketType, ['daily', 'monthly'], true)) {
+            $ticketType = 'daily';
+        }
+
+        $typeFilter = function ($query) use ($ticketType) {
+            if ($ticketType === 'monthly') {
+                $query->where('ticket_type', 'monthly');
+            } else {
+                $query->where(function ($q) {
+                    $q->where('ticket_type', 'daily')->orWhereNull('ticket_type');
+                });
+            }
+        };
 
         // Manager xem toàn bộ; bảo vệ chỉ xem log liên quan tài khoản mình
-        $pendingQuery = VehicleLog::with('guardIn')
+        $pendingQuery = VehicleLog::with(['guardIn', 'monthlyTicket'])
+            ->where($typeFilter)
             ->where(function ($query) {
                 $query->where('status', 'in')->orWhere('is_valid', false);
             });
@@ -1227,10 +1446,15 @@ class ApiController extends Controller
                     'guard_in' => $log->guardIn ? $log->guardIn->fullname : 'N/A',
                     'entry_image' => $log->entry_image ? asset($log->entry_image) : null,
                     'is_valid' => $log->is_valid,
+                    'ticket_type' => $log->ticket_type ?? 'daily',
+                    'monthly_code' => $log->monthlyTicket?->code,
+                    'fee' => (int) ($log->fee ?? 0),
+                    'fee_text' => ParkingFee::formatVnd((int) ($log->fee ?? 0)),
                 ];
             });
 
-        $completedQuery = VehicleLog::with(['guardIn', 'guardOut'])
+        $completedQuery = VehicleLog::with(['guardIn', 'guardOut', 'monthlyTicket'])
+            ->where($typeFilter)
             ->where('status', 'out')
             ->where(function ($query) {
                 $query->whereNull('is_valid')->orWhere('is_valid', true);
@@ -1257,10 +1481,15 @@ class ApiController extends Controller
                     'guard_out' => $log->guardOut ? $log->guardOut->fullname : 'N/A',
                     'entry_image' => $log->entry_image ? asset($log->entry_image) : null,
                     'exit_image' => $log->exit_image ? asset($log->exit_image) : null,
+                    'ticket_type' => $log->ticket_type ?? 'daily',
+                    'monthly_code' => $log->monthlyTicket?->code,
+                    'fee' => (int) ($log->fee ?? 0),
+                    'fee_text' => ParkingFee::formatVnd((int) ($log->fee ?? 0)),
                 ];
             });
 
         $pendingCountQuery = VehicleLog::query()
+            ->where($typeFilter)
             ->where(function ($query) {
                 $query->where('status', 'in')->orWhere('is_valid', false);
             });
@@ -1269,6 +1498,7 @@ class ApiController extends Controller
         }
 
         $completedCountQuery = VehicleLog::query()
+            ->where($typeFilter)
             ->where('status', 'out')
             ->where(function ($query) {
                 $query->whereNull('is_valid')->orWhere('is_valid', true);
@@ -1298,8 +1528,24 @@ class ApiController extends Controller
         $uid = auth()->id();
 
         $lastEntry = VehicleLog::query()
+            ->with('monthlyTicket')
             ->where('guard_in_id', $uid)
             ->where('entry_time', '>=', now()->subMinutes(5))
+            ->where(function ($q) {
+                $q->whereNull('monthly_ticket_id')
+                    ->orWhere('monthly_confirmed', true)
+                    ->orWhere('monthly_confirmed', false);
+            })
+            ->orderByDesc('id')
+            ->first();
+
+        $pendingMonthlyEntry = VehicleLog::query()
+            ->with('monthlyTicket')
+            ->where('guard_in_id', $uid)
+            ->where('ticket_type', 'monthly')
+            ->whereNotNull('monthly_ticket_id')
+            ->whereNull('monthly_confirmed')
+            ->where('status', 'in')
             ->orderByDesc('id')
             ->first();
 
@@ -1314,19 +1560,37 @@ class ApiController extends Controller
 
         $entryPayload = null;
         if ($lastEntry) {
+            $isMonthly = ($lastEntry->ticket_type ?? 'daily') === 'monthly';
             $entryPayload = [
                 'id' => $lastEntry->id,
                 'plate_number' => $lastEntry->plate_number,
-                'code' => $lastEntry->code,
+                'code' => $isMonthly && $lastEntry->monthlyTicket ? $lastEntry->monthlyTicket->code : $lastEntry->code,
+                'ticket_type' => $isMonthly ? 'monthly' : 'daily',
+                'monthly_code' => $lastEntry->monthlyTicket?->code,
                 'entry_image' => $lastEntry->entry_image ? asset($lastEntry->entry_image) : null,
                 'entry_time' => optional($lastEntry->entry_time)->toDateTimeString(),
             ];
         }
 
+        $pendingMonthlyPayload = null;
+        if ($pendingMonthlyEntry) {
+            $ticket = $pendingMonthlyEntry->monthlyTicket;
+            $pendingMonthlyPayload = [
+                'log_id' => $pendingMonthlyEntry->id,
+                'code' => $ticket ? $ticket->code : $pendingMonthlyEntry->code,
+                'registered_plate' => $ticket ? $ticket->plate_number : null,
+                'entry_plate' => $pendingMonthlyEntry->plate_number,
+                'entry_image' => $pendingMonthlyEntry->entry_image ? asset($pendingMonthlyEntry->entry_image) : null,
+                'monthly_match' => (bool) $pendingMonthlyEntry->monthly_match,
+                'message' => 'Biển số nhận diện (' . $pendingMonthlyEntry->plate_number . ') không khớp biển đăng ký vé tháng (' . ($ticket->plate_number ?? '-') . ').',
+            ];
+        }
+
         $pendingPayload = null;
         if ($pendingValidation) {
+            $pendingValidation->load('monthlyTicket');
             $isMatch = $this->platesMatch($pendingValidation->plate_number, $pendingValidation->exit_plate_number);
-            $pendingPayload = [
+            $pendingPayload = array_merge([
                 'log_id' => $pendingValidation->id,
                 'code' => $pendingValidation->code,
                 'entry_plate' => $pendingValidation->plate_number,
@@ -1337,7 +1601,7 @@ class ApiController extends Controller
                 'message' => $isMatch
                     ? ('Biển số khớp: ' . $pendingValidation->exit_plate_number . '. Vui lòng xác nhận.')
                     : ('Biển số xe ra (' . $pendingValidation->exit_plate_number . ') không khớp với xe vào (' . $pendingValidation->plate_number . ').'),
-            ];
+            ], $this->feePayload($pendingValidation, ['fee' => 0, 'hours' => 0]));
         }
 
         $matchedPayload = null;
@@ -1351,7 +1615,8 @@ class ApiController extends Controller
                 ->orderByDesc('id')
                 ->first();
             if ($matchedExit && $this->platesMatch($matchedExit->plate_number, $matchedExit->exit_plate_number)) {
-                $matchedPayload = [
+                $matchedExit->load('monthlyTicket');
+                $matchedPayload = array_merge([
                     'log_id' => $matchedExit->id,
                     'code' => $matchedExit->code,
                     'entry_plate' => $matchedExit->plate_number,
@@ -1361,16 +1626,26 @@ class ApiController extends Controller
                     'match' => true,
                     'already_out' => true,
                     'message' => 'Biển số khớp: ' . $matchedExit->exit_plate_number,
-                ];
+                ], $this->feePayload($matchedExit, [
+                    'fee' => (int) ($matchedExit->fee ?? 0),
+                    'hours' => ($matchedExit->ticket_type === 'monthly')
+                        ? 0
+                        : ParkingFee::billedHours($matchedExit->entry_time, $matchedExit->exit_time ?: now()),
+                ]));
             }
         }
+
+        $armedMonthly = $this->readArmedMonthlyPayload();
 
         return response()->json([
             'success' => true,
             'last_entry' => $entryPayload,
             'pending_validation' => $pendingPayload,
+            'pending_monthly_entry' => $pendingMonthlyPayload,
             'matched_exit' => $matchedPayload,
             'armed_exit_code' => $this->readArmedExitCode(),
+            'armed_monthly_code' => $armedMonthly['code'] ?? null,
+            'armed_monthly_plate' => $armedMonthly['plate_number'] ?? null,
             'entry_alert' => $this->readEntryAlert(),
             'hold_scan' => $this->isScanHoldActive(),
             'live_preview' => [
@@ -1889,6 +2164,107 @@ class ApiController extends Controller
         return strtoupper((string) $data['code']);
     }
 
+    public function lookupMonthlyTicket(Request $request)
+    {
+        $this->releaseSessionLock();
+        $code = strtoupper(trim((string) $request->input('code', '')));
+        return response()->json($this->monthlyLookupResponse($code), 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
+    }
+
+    public function armMonthlyCode(Request $request)
+    {
+        $code = strtoupper(trim((string) $request->input('code', '')));
+        if ($code === '') {
+            $this->clearArmedMonthlyCode();
+            return response()->json($this->monthlyLookupResponse(''));
+        }
+
+        $payload = $this->monthlyLookupResponse($code);
+        if (!empty($payload['found'])) {
+            $ticket = MonthlyTicket::findUsableByCode($code);
+            if ($ticket) {
+                $this->writeArmedMonthlyCode($ticket);
+            }
+        } else {
+            $this->clearArmedMonthlyCode();
+        }
+
+        return response()->json($payload, 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
+    }
+
+    public function clearMonthlyCode()
+    {
+        $this->clearArmedMonthlyCode();
+        return response()->json(['success' => true]);
+    }
+
+    public function validateMonthlyEntry(Request $request)
+    {
+        $request->validate([
+            'log_id' => 'required',
+            'is_valid' => 'required',
+        ]);
+
+        $log = VehicleLog::with('monthlyTicket')->find($request->log_id);
+        if (!$log) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Không tìm thấy thông tin phương tiện!',
+            ]);
+        }
+
+        if ((int) $log->guard_in_id !== (int) auth()->id()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Không có quyền xác nhận lượt này.',
+            ], 403);
+        }
+
+        if (($log->ticket_type ?? '') !== 'monthly' || $log->monthly_confirmed !== null) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Lượt này không chờ xác nhận vé tháng.',
+            ]);
+        }
+
+        $isValid = filter_var($request->is_valid, FILTER_VALIDATE_BOOLEAN);
+        $monthlyCode = $log->monthlyTicket?->code ?? $log->code;
+
+        if ($isValid) {
+            $log->update([
+                'monthly_confirmed' => true,
+                'monthly_match' => $log->monthly_match,
+                'ticket_type' => 'monthly',
+                'fee' => 0,
+            ]);
+            return response()->json([
+                'success' => true,
+                'ticket_type' => 'monthly',
+                'code' => $monthlyCode,
+                'plate_number' => $log->plate_number,
+                'image_url' => $log->entry_image ? asset($log->entry_image) : null,
+                'message' => 'Đã xác nhận hợp lệ. Xe vào bằng vé tháng ' . $monthlyCode . '.',
+            ]);
+        }
+
+        $log->update([
+            'ticket_type' => 'daily',
+            'monthly_ticket_id' => null,
+            'monthly_match' => false,
+            'monthly_confirmed' => false,
+            'fee' => null,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'ticket_type' => 'daily',
+            'code' => $log->code,
+            'plate_number' => $log->plate_number,
+            'image_url' => $log->entry_image ? asset($log->entry_image) : null,
+            'message' => 'Đã xác nhận không hợp lệ. Lượt này tính vé ngày (mã ' . $log->code . ').',
+        ]);
+    }
+
     /**
      * Máy tính nhập mã code (như quẹt thẻ) → kích hoạt ĐT quét xe ra.
      */
@@ -1902,12 +2278,7 @@ class ApiController extends Controller
             ], 422);
         }
 
-        $log = VehicleLog::where('code', $code)
-            ->where(function ($q) {
-                $q->where('status', 'in')->orWhere('is_valid', false);
-            })
-            ->latest()
-            ->first();
+        $log = $this->findOpenLogByCode($code);
 
         if (!$log) {
             $this->clearArmedExitCodeStorage();
