@@ -1125,6 +1125,12 @@ $(document).ready(function() {
                 resetEntryUi();
             }
         }, 1000);
+        const exitNow = ($('#exit-code').val() || '').trim().toUpperCase();
+        const entered = String(code || '').toUpperCase();
+        if (exitNow.length === 6 && entered && exitNow === entered) {
+            lastArmFailedCode = '';
+            armExitCodeIfReady(true);
+        }
     }
 
     function showAlreadyInsideAlert(alert, opts) {
@@ -1379,13 +1385,14 @@ $(document).ready(function() {
                 }
 
                 // Nếu mã còn trên ô nhập mà server mất kích hoạt (lỗi/hết hạn) → kích hoạt lại để ĐT quét tiếp
-                // Conflict: poll lại liên tục — bên kia xóa mã → xanh; đã quét xong → "Mã không tồn tại"
+                // Conflict: poll lại — bên kia xóa mã → xanh
+                // Failed ("không tồn tại"): poll lại — khi có xe vào cùng mã thì tự chuyển xanh
                 const codeNow = ($('#exit-code').val() || '').trim().toUpperCase();
-                if (codeNow.length === 6 && !res.armed_exit_code && !pending && !exitLockedByPending
-                    && codeNow !== lastArmFailedCode) {
+                if (codeNow.length === 6 && !res.armed_exit_code && !pending && !exitLockedByPending) {
                     const wasConflict = (lastArmConflictCode === codeNow);
+                    const wasFailed = (lastArmFailedCode === codeNow);
                     if (lastArmedCode === codeNow) lastArmedCode = '';
-                    armExitCodeIfReady(wasConflict);
+                    armExitCodeIfReady(wasConflict || wasFailed);
                 } else if (res.armed_exit_code && codeNow === String(res.armed_exit_code).toUpperCase()) {
                     // Chỉ hiện xanh khi ô nhập vẫn đúng mã đang kích hoạt
                     lastArmedCode = String(res.armed_exit_code).toUpperCase();
@@ -1595,7 +1602,7 @@ $(document).ready(function() {
             $('#confirmModalTitle').html('<span class="text-white"><i class="material-icons-outlined align-middle me-1">warning</i> Xác nhận Không Hợp Lệ</span>');
             $('#confirmModalIcon').html('<i class="material-icons-outlined text-danger" style="font-size: 70px;">gpp_bad</i>');
             $('#confirmModalQuestion').text(kind === 'monthly'
-                ? 'Xác nhận KHÔNG HỢP LỆ — không cho xe vào và không lưu lượt này?'
+                ? 'Xác nhận KHÔNG HỢP LỆ — không cho xe vào?'
                 : 'Xác nhận phương tiện KHÔNG HỢP LỆ (Từ chối cho ra)?');
             $('#confirmModalSubmitBtn').removeClass('btn-success').addClass('btn-danger')
                 .text(kind === 'monthly' ? 'Không cho vào' : 'Xác Nhận Từ Chối');
@@ -1632,7 +1639,7 @@ $(document).ready(function() {
                     lastSeenMonthlyPendingId = null;
                     currentMonthlyLogId = null;
                     if (res.rejected) {
-                        showNotificationModal(false, 'Không cho xe vào', res.message || 'Đã từ chối. Không lưu vào database.');
+                        showNotificationModal(false, 'Không cho xe vào', res.message || 'Đã từ chối xe vào.');
                         resetEntryUi();
                     } else {
                         if (res.log_id) lastSeenEntryId = res.log_id;

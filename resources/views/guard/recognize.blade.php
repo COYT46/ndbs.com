@@ -14,6 +14,10 @@
             width: 20.83333333%;
         }
     }
+    .recognize-hint {
+        min-height: 1.25em;
+        line-height: 1.25;
+    }
 </style>
 @endpush
 
@@ -30,7 +34,7 @@
                 <div class="card-header bg-primary text-white d-flex align-items-center justify-content-between py-3">
                     <h5 class="mb-0 text-white fw-bold fs-6"><i class="material-icons-outlined align-middle me-1">login</i> Xe Vào (Check-In)</h5>
                 </div>
-                <div class="card-body text-center d-flex flex-column justify-content-between p-3">
+                <div class="card-body text-center d-flex flex-column p-3">
                     <div>
                         <div class="bg-light d-flex align-items-center justify-content-center mb-3 rounded overflow-hidden"
                             style="height: 260px; border: 2px dashed #0d6efd; position: relative;">
@@ -48,14 +52,14 @@
                             <span class="input-group-text bg-light text-primary fw-bold small"><i class="material-icons-outlined me-1 fs-6">qr_code</i> Mã vé tháng</span>
                             <input type="text" id="entry-code" class="form-control text-uppercase fw-bold" placeholder="A00001" maxlength="6">
                         </div>
-                        <small id="entry-code-arm-hint" class="text-muted d-block mb-2" style="font-size: 13px;">
+                        <small id="entry-code-arm-hint" class="text-muted d-block mb-2 recognize-hint" style="font-size: 13px;">
                             Để trống nếu vé ngày.
                         </small>
-                    </div>
-                    <div>
                         <button id="btn-entry-recognize" class="btn btn-primary w-100 fw-bold shadow-sm py-2">
                             <i class="material-icons-outlined align-middle me-1">photo_camera</i> <span id="btn-entry-recognize-label">Nhận diện</span>
                         </button>
+                    </div>
+                    <div>
                         <div id="entry-result" class="mt-3" style="display: none;">
                             <div class="alert alert-success border-0 shadow-sm mb-0 p-2">
                                 <h6 class="alert-heading fw-bold mb-1"><i class="material-icons-outlined align-middle">check_circle</i> Nhận diện thành công!</h6>
@@ -123,7 +127,7 @@
                 <div class="card-header bg-danger text-white d-flex align-items-center justify-content-between py-3">
                     <h5 class="mb-0 text-white fw-bold fs-6"><i class="material-icons-outlined align-middle me-1">logout</i> Xe Ra (Check-Out)</h5>
                 </div>
-                <div class="card-body text-center d-flex flex-column justify-content-between p-3">
+                <div class="card-body text-center d-flex flex-column p-3">
                     <div>
                         <div class="bg-light d-flex align-items-center justify-content-center mb-3 rounded overflow-hidden"
                             style="height: 260px; border: 2px dashed #dc3545; position: relative;">
@@ -135,20 +139,20 @@
                             </div>
                         </div>
                         <div class="mb-2" id="exit-controls">
-                            <input type="file" id="exit-file" class="form-control mb-2" accept="image/*">
+                            <input type="file" id="exit-file" class="form-control" accept="image/*">
                         </div>
                         <div class="input-group mb-2 shadow-sm">
                             <span class="input-group-text bg-light text-danger fw-bold small"><i class="material-icons-outlined me-1 fs-6">qr_code</i> Mã Code</span>
                             <input type="text" id="exit-code" class="form-control text-uppercase fw-bold" placeholder="Nhập mã" maxlength="6">
                         </div>
-                        <small id="exit-code-arm-hint" class="text-muted d-block mb-2" style="font-size: 13px;">
-                            Nhập mã 6 ký tự rồi chọn ảnh và nhận diện
+                        <small id="exit-code-arm-hint" class="text-muted d-block mb-2 recognize-hint" style="font-size: 13px;">
+                            Nhập mã 6 ký tự và chọn ảnh
                         </small>
-                    </div>
-                    <div>
                         <button id="btn-exit-recognize" class="btn btn-danger w-100 fw-bold shadow-sm py-2" type="button">
                             <i class="material-icons-outlined align-middle me-1">photo_camera</i> <span id="btn-exit-recognize-label">Nhận diện</span>
                         </button>
+                    </div>
+                    <div>
                         <div id="exit-result" class="mt-3" style="display: none;">
                             <div class="alert mb-0 shadow-sm p-2" id="exit-alert-box">
                                 <h6 class="mb-0 fw-bold fs-6" id="exit-message"></h6>
@@ -265,6 +269,8 @@ $(document).ready(function() {
         validateMonthly: @json(route('api.validate_monthly_entry', [], false)),
         dismissPendingMonthly: @json(route('api.dismiss_pending_monthly_entry', [], false)),
         lookupMonthly: @json(route('api.lookup_monthly_ticket', [], false)),
+        armExit: @json(route('api.arm_exit_code', [], false)),
+        clearExit: @json(route('api.clear_exit_code', [], false)),
         scanHoldAck: @json(route('api.scan_hold_ack', [], false)),
         manualEntry: @json(route('api.manual_confirm_entry', [], false)),
         manualExit: @json(route('api.manual_confirm_exit', [], false))
@@ -283,6 +289,12 @@ $(document).ready(function() {
     let lastLookupFailed = '';
     let monthlyLookupSeq = 0;
     let pendingValidationKind = 'exit';
+    let lastArmedCode = '';
+    let lastArmFailedCode = '';
+    let lastArmConflictCode = '';
+    let armInFlight = false;
+    let conflictRetryTimer = null;
+    const IDLE_EXIT_HINT = 'Nhập mã 6 ký tự và chọn ảnh';
 
     function showExitFee(data) {
         if (!data || (data.ticket_type !== 'monthly' && data.fee == null && !data.fee_text)) {
@@ -361,6 +373,7 @@ $(document).ready(function() {
             $.post(API.retryExit, {});
             $.post(API.scanHoldAck);
             $.post(API.dismissPendingMonthly);
+            $.post(API.clearExit);
         }
     } catch (e) {}
 
@@ -453,6 +466,113 @@ $(document).ready(function() {
         $('#comp-in-status-badge').removeClass('bg-danger text-white').addClass('bg-light text-primary').text('Chờ nhận diện xe vào');
     }
 
+    function stopConflictRetry() {
+        if (conflictRetryTimer) {
+            clearTimeout(conflictRetryTimer);
+            conflictRetryTimer = null;
+        }
+    }
+
+    function scheduleConflictRetry() {
+        stopConflictRetry();
+        conflictRetryTimer = setTimeout(function() {
+            conflictRetryTimer = null;
+            const code = ($('#exit-code').val() || '').trim().toUpperCase();
+            if (code.length === 6 && lastArmConflictCode === code && !exitLocked) {
+                armExitCodeIfReady(true);
+            }
+        }, 600);
+    }
+
+    function markArmFailed(msg) {
+        stopConflictRetry();
+        lastArmedCode = '';
+        lastArmConflictCode = '';
+        lastArmFailedCode = ($('#exit-code').val() || '').trim().toUpperCase();
+        $.post(API.clearExit);
+        $('#exit-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
+            .text((msg || 'Mã không hợp lệ') + ' — sửa mã rồi nhập lại');
+    }
+
+    function markArmConflict(msg) {
+        lastArmedCode = '';
+        lastArmFailedCode = '';
+        lastArmConflictCode = ($('#exit-code').val() || '').trim().toUpperCase();
+        $('#exit-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
+            .text(msg || 'Mã đang được tài khoản khác sử dụng — không nhận mã.');
+        scheduleConflictRetry();
+    }
+
+    function armExitCodeIfReady(forceRetry) {
+        const code = ($('#exit-code').val() || '').trim().toUpperCase();
+        if (code.length !== 6) {
+            const hadArmUi = !!(lastArmedCode || lastArmFailedCode || lastArmConflictCode
+                || $('#exit-code-arm-hint').hasClass('text-success')
+                || $('#exit-code-arm-hint').hasClass('text-danger'));
+            if (hadArmUi || code.length === 0) {
+                stopConflictRetry();
+                if (lastArmedCode || hadArmUi) {
+                    $.post(API.clearExit);
+                }
+                lastArmedCode = '';
+                lastArmFailedCode = '';
+                lastArmConflictCode = '';
+                $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
+                    .text(IDLE_EXIT_HINT);
+            }
+            return;
+        }
+        if (!forceRetry && (code === lastArmedCode || code === lastArmFailedCode || code === lastArmConflictCode)) {
+            return;
+        }
+        if (armInFlight) return;
+        armInFlight = true;
+        $.post(API.armExit, { code: code })
+            .done(function(res) {
+                if (res && res.success) {
+                    stopConflictRetry();
+                    lastArmedCode = code;
+                    lastArmFailedCode = '';
+                    lastArmConflictCode = '';
+                    $('#exit-code-arm-hint').removeClass('text-muted text-danger').addClass('text-success')
+                        .text('Đã nhận mã ' + code + (res.plate_number ? (' — BSX ' + res.plate_number) : ''));
+                } else if (res && res.conflict) {
+                    markArmConflict((res && res.message) || 'Mã đang được tài khoản khác sử dụng — không nhận mã.');
+                } else if (res && res.monthly_disabled) {
+                    lastArmedCode = '';
+                    lastArmFailedCode = '';
+                    lastArmConflictCode = '';
+                    $('#exit-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
+                        .text(res.message || 'Vé tháng đã vô hiệu hóa — không cho quét xe ra.');
+                } else {
+                    markArmFailed((res && res.message) || 'Không nhận được mã này');
+                }
+            })
+            .fail(function(xhr) {
+                const body = (xhr && xhr.responseJSON) || {};
+                if (body.conflict || xhr.status === 409) {
+                    markArmConflict(body.message || 'Mã đang được tài khoản khác sử dụng — không nhận mã.');
+                    return;
+                }
+                if (body.monthly_disabled || xhr.status === 422) {
+                    lastArmedCode = '';
+                    lastArmFailedCode = '';
+                    lastArmConflictCode = '';
+                    $('#exit-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
+                        .text(body.message || 'Vé tháng đã vô hiệu hóa — không cho quét xe ra.');
+                    return;
+                }
+                if (xhr.status === 404) {
+                    markArmFailed(body.message || 'Mã không tồn tại.');
+                    return;
+                }
+                markArmFailed(body.message || 'Mã không hợp lệ');
+            })
+            .always(function() {
+                armInFlight = false;
+            });
+    }
+
     function resetExitAndComparison() {
         clearExitTimer();
         autoExitInProgress = false;
@@ -474,8 +594,13 @@ $(document).ready(function() {
         $('#comp-status-badge').removeClass('bg-success bg-danger text-white').addClass('bg-warning text-dark').text('Đang chờ nhận diện xe ra...');
         $('#validation-buttons').hide();
         currentLogId = null;
+        lastArmedCode = '';
+        lastArmFailedCode = '';
+        lastArmConflictCode = '';
+        stopConflictRetry();
+        $.post(API.clearExit);
         $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
-            .text('Nhập mã 6 ký tự rồi chọn ảnh và nhận diện');
+            .text(IDLE_EXIT_HINT);
     }
 
     function autoApproveExit(logId) {
@@ -538,6 +663,12 @@ $(document).ready(function() {
                 resetEntryUi();
             }
         }, 1000);
+        const exitNow = ($('#exit-code').val() || '').trim().toUpperCase();
+        const entered = String(code || '').toUpperCase();
+        if (exitNow.length === 6 && entered && exitNow === entered) {
+            lastArmFailedCode = '';
+            armExitCodeIfReady(true);
+        }
     }
 
     function showAlreadyInsideAlert(alert) {
@@ -781,9 +912,15 @@ $(document).ready(function() {
                     }
                 },
                 error: function(xhr) {
+                    const body = (xhr && xhr.responseJSON) || {};
+                    if (body.conflict || xhr.status === 409) {
+                        markArmConflict(body.message || 'Mã đang được tài khoản khác sử dụng — không nhận mã.');
+                        showNotificationModal(false, 'Không nhận mã', body.message || 'Mã đang được tài khoản khác sử dụng — không nhận mã.');
+                        return;
+                    }
                     let msg = 'Lỗi kết nối máy chủ (HTTP ' + xhr.status + ').';
-                    if (xhr.responseJSON && xhr.responseJSON.message) msg = xhr.responseJSON.message;
-                    showExitError(msg, !!(xhr.responseJSON && xhr.responseJSON.ocr_failed));
+                    if (body.message) msg = body.message;
+                    showExitError(msg, !!body.ocr_failed);
                 },
                 complete: function() {
                     if (exitLocked) {
@@ -925,6 +1062,12 @@ $(document).ready(function() {
         const codeVal = ($('#exit-code').val() || '').trim();
         if (!codeVal) return showNotificationModal(false, 'Chưa Đủ Điều Kiện', 'Thiếu: Mã code xe vào');
         if (codeVal.length !== 6) return showNotificationModal(false, 'Mã Code Không Hợp Lệ', 'Mã code phải có đúng 6 ký tự!');
+        if (lastArmConflictCode === codeVal) {
+            return showNotificationModal(false, 'Không nhận mã', 'Mã đang được tài khoản khác sử dụng — không nhận mã.');
+        }
+        if (lastArmFailedCode === codeVal) {
+            return showNotificationModal(false, 'Mã không hợp lệ', $('#exit-code-arm-hint').text() || 'Mã không tồn tại.');
+        }
 
         const fileInput = $('#exit-file')[0];
         if (fileInput.files.length > 0) {
@@ -953,7 +1096,7 @@ $(document).ready(function() {
             $('#confirmModalTitle').html('<span class="text-white"><i class="material-icons-outlined align-middle me-1">warning</i> Xác nhận Không Hợp Lệ</span>');
             $('#confirmModalIcon').html('<i class="material-icons-outlined text-danger" style="font-size: 70px;">gpp_bad</i>');
             $('#confirmModalQuestion').text(kind === 'monthly'
-                ? 'Xác nhận KHÔNG HỢP LỆ — không cho xe vào và không lưu lượt này?'
+                ? 'Xác nhận KHÔNG HỢP LỆ — không cho xe vào?'
                 : 'Xác nhận phương tiện KHÔNG HỢP LỆ (Từ chối cho ra)?');
             $('#confirmModalSubmitBtn').removeClass('btn-success').addClass('btn-danger')
                 .text(kind === 'monthly' ? 'Không cho vào' : 'Xác Nhận Từ Chối');
@@ -989,7 +1132,7 @@ $(document).ready(function() {
                     $('#entry-validation-buttons').hide();
                     currentMonthlyLogId = null;
                     if (res.rejected) {
-                        showNotificationModal(false, 'Không cho xe vào', res.message || 'Đã từ chối. Không lưu vào database.');
+                        showNotificationModal(false, 'Không cho xe vào', res.message || 'Đã từ chối xe vào.');
                         resetEntryUi();
                     } else {
                         showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url);
@@ -1040,15 +1183,21 @@ $(document).ready(function() {
 
     $('#exit-code').on('input', function() {
         this.value = (this.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+        armExitCodeIfReady();
     });
     $('#entry-code').on('input', function() {
         this.value = (this.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
         lookupMonthlyIfReady();
     });
     setInterval(function() {
-        const code = ($('#entry-code').val() || '').trim().toUpperCase();
-        if (code.length === 6 && !$('#entry-code').prop('disabled')) {
+        const monthly = ($('#entry-code').val() || '').trim().toUpperCase();
+        if (monthly.length === 6 && !$('#entry-code').prop('disabled')) {
             lookupMonthlyIfReady(true);
+        }
+        const exitCode = ($('#exit-code').val() || '').trim().toUpperCase();
+        if (exitCode.length === 6 && !exitLocked
+            && (lastArmConflictCode === exitCode || lastArmedCode === exitCode || lastArmFailedCode === exitCode)) {
+            armExitCodeIfReady(true);
         }
     }, 2000);
 });

@@ -1213,6 +1213,16 @@ class ApiController extends Controller
                 ]);
             }
 
+            $claim = $this->claimGlobalArmedCode($code, $log->id);
+            if (empty($claim['ok'])) {
+                return response()->json([
+                    'success' => false,
+                    'conflict' => true,
+                    'message' => $claim['message'] ?? 'Mã đang được tài khoản khác sử dụng — không nhận mã.',
+                    'retryable' => true,
+                ], 409);
+            }
+
             $file = $request->file('image');
             $uploadDir = public_path('uploads/vehicles');
             if (!file_exists($uploadDir)) {
@@ -1256,8 +1266,8 @@ class ApiController extends Controller
                     'is_valid' => true,
                 ]);
                 $log->save();
-                $this->clearLocalArmedExitCodeOnly();
-                $this->releaseGlobalArmedCode(strtoupper((string) $log->code));
+                $this->purgeArmedExitCodeEverywhere($code);
+                $this->purgeArmedExitCodeEverywhere(strtoupper((string) $log->code));
                 $this->writeManualOcrPause(10);
             } else {
                 // Biển không khớp — chờ bảo vệ bấm Hợp lệ / Không hợp lệ (ĐT không quét)
@@ -1427,6 +1437,16 @@ class ApiController extends Controller
             ]);
         }
 
+        $claim = $this->claimGlobalArmedCode($code, $log->id);
+        if (empty($claim['ok'])) {
+            return response()->json([
+                'success' => false,
+                'conflict' => true,
+                'message' => $claim['message'] ?? 'Mã đang được tài khoản khác sử dụng — không nhận mã.',
+                'retryable' => true,
+            ], 409);
+        }
+
         $relativePath = $this->storeManualVehicleImage('exit', $request);
         if (!$relativePath) {
             return response()->json([
@@ -1578,8 +1598,7 @@ class ApiController extends Controller
             ]);
             $log->save();
 
-            $this->clearLocalArmedExitCodeOnly();
-            $this->releaseGlobalArmedCode(strtoupper((string) $log->code));
+            $this->purgeArmedExitCodeEverywhere(strtoupper((string) $log->code));
             $this->writeManualOcrPause(10);
             if ($this->scanHoldReason() === 'exit_pending') {
                 $this->clearScanHold();
@@ -1606,8 +1625,7 @@ class ApiController extends Controller
             'guard_out_id' => auth()->id()
         ]);
         // Nhả khóa — tài khoản khác có thể kích hoạt lại (xanh)
-        $this->clearLocalArmedExitCodeOnly();
-        $this->releaseGlobalArmedCode(strtoupper((string) $log->code));
+        $this->purgeArmedExitCodeEverywhere(strtoupper((string) $log->code));
         if ($this->scanHoldReason() === 'exit_pending') {
             $this->clearScanHold();
         }
@@ -2335,6 +2353,40 @@ class ApiController extends Controller
     }
 
     /**
+     * Xe đã ra / mã không còn dùng được: nhả khóa toàn cục + xóa kích hoạt local của mọi tài khoản.
+     */
+    private function purgeArmedExitCodeEverywhere(string $code): void
+    {
+        $code = strtoupper(trim($code));
+        if ($code === '') {
+            return;
+        }
+
+        $this->withGlobalArmedLocks(function (&$locks) use ($code) {
+            unset($locks[$code]);
+            return true;
+        });
+
+        $root = storage_path('app/monitor');
+        if (!is_dir($root)) {
+            return;
+        }
+        foreach (glob($root . DIRECTORY_SEPARATOR . '*' . DIRECTORY_SEPARATOR . 'armed_exit_code.json') ?: [] as $path) {
+            $data = json_decode((string) @file_get_contents($path), true);
+            if (!is_array($data) || strtoupper((string) ($data['code'] ?? '')) !== $code) {
+                continue;
+            }
+            @unlink($path);
+            $scope = basename(dirname($path));
+            try {
+                \Illuminate\Support\Facades\Cache::forget('armed_exit_code_' . $scope);
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
+    }
+
+    /**
      * Chỉ tắt kích hoạt local (ĐT ngừng quét) — không nhả khóa toàn cục.
      */
     private function clearLocalArmedExitCodeOnly()
@@ -2559,7 +2611,7 @@ class ApiController extends Controller
                 'ticket_type' => 'monthly',
                 'code' => $monthlyCode,
                 'plate_number' => $pending['plate_number'] ?? null,
-                'message' => 'Đã từ chối xe vào. Không lưu lượt này.',
+                'message' => 'Đã từ chối xe vào.',
                 'pause_ocr_s' => 0,
             ]);
         }
