@@ -408,10 +408,21 @@
             const modal = this;
             const start = modal.getAttribute('data-start');
             const dur = $(modal).find('.edit-duration');
+            const plate = $(modal).find('.edit-plate');
             const update = function() {
                 updatePriceExpiry(dur, $(modal).find('.edit-price'), $(modal).find('.edit-expiry'), start);
             };
+            const restore = function() {
+                plate.val(plate.attr('data-original') || '');
+                const originalDuration = String(dur.attr('data-original') || '');
+                if (originalDuration) {
+                    dur.val(originalDuration);
+                }
+                $(modal).find('.edit-ticket-error').hide();
+                update();
+            };
             dur.on('change', update);
+            $(modal).on('hidden.bs.modal', restore);
             update();
         });
 

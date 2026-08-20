@@ -26,6 +26,11 @@ class ManagerController extends Controller
     {
         if (auth()->user()->role !== 'manager') return redirect('/');
 
+        $request->merge([
+            'daily_price_per_hour' => (int) preg_replace('/\D+/', '', (string) $request->input('daily_price_per_hour')),
+            'monthly_price_per_month' => (int) preg_replace('/\D+/', '', (string) $request->input('monthly_price_per_month')),
+        ]);
+
         $request->validate([
             'daily_price_per_hour' => 'required|numeric|min:1',
             'monthly_price_per_month' => 'required|numeric|min:1',

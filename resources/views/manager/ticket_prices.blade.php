@@ -32,16 +32,16 @@
                     @csrf
                     <div class="mb-4">
                         <label class="form-label fw-semibold">Giá vé ngày (VNĐ / 1 giờ)</label>
-                        <input type="number" min="1" step="1" class="form-control form-control-lg"
+                        <input type="text" inputmode="numeric" autocomplete="off" class="form-control form-control-lg"
                             name="daily_price_per_hour" id="daily_price_per_hour"
-                            value="{{ old('daily_price_per_hour', $dailyPrice) }}" required>
+                            value="{{ number_format((int) old('daily_price_per_hour', $dailyPrice), 0, ',', '.') }}" required>
                         <small class="text-muted">Mặc định 1.000 VNĐ / giờ. Không được để trống hoặc ≤ 0.</small>
                     </div>
                     <div class="mb-4">
                         <label class="form-label fw-semibold">Giá vé tháng (VNĐ / 1 tháng)</label>
-                        <input type="number" min="1" step="1" class="form-control form-control-lg"
+                        <input type="text" inputmode="numeric" autocomplete="off" class="form-control form-control-lg"
                             name="monthly_price_per_month" id="monthly_price_per_month"
-                            value="{{ old('monthly_price_per_month', $monthlyPrice) }}" required>
+                            value="{{ number_format((int) old('monthly_price_per_month', $monthlyPrice), 0, ',', '.') }}" required>
                         <small class="text-muted">Mặc định 100.000 VNĐ / tháng (30 ngày). Không được để trống hoặc ≤ 0.</small>
                     </div>
                     <button type="submit" class="btn btn-primary w-100 fw-bold py-2">
@@ -68,13 +68,46 @@
             });
         }, 3500);
 
+        function digitsOnly(value) {
+            return String(value || '').replace(/\D/g, '');
+        }
+
+        function formatVnd(value) {
+            const digits = digitsOnly(value).replace(/^0+(?=\d)/, '');
+            if (!digits) return '';
+            return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+        }
+
+        function bindPriceInput($el) {
+            $el.on('input', function() {
+                const el = this;
+                const start = el.selectionStart || 0;
+                const digitsBefore = digitsOnly(el.value.slice(0, start)).length;
+                const formatted = formatVnd(el.value);
+                el.value = formatted;
+                let pos = 0;
+                let seen = 0;
+                while (pos < formatted.length && seen < digitsBefore) {
+                    if (/\d/.test(formatted.charAt(pos))) seen++;
+                    pos++;
+                }
+                el.setSelectionRange(pos, pos);
+            });
+        }
+
+        bindPriceInput($('#daily_price_per_hour'));
+        bindPriceInput($('#monthly_price_per_month'));
+
         $('#ticket-price-form').on('submit', function(e) {
-            const daily = Number($('#daily_price_per_hour').val());
-            const monthly = Number($('#monthly_price_per_month').val());
-            if (!$('#daily_price_per_hour').val() || !$('#monthly_price_per_month').val() || daily <= 0 || monthly <= 0) {
+            const daily = Number(digitsOnly($('#daily_price_per_hour').val()));
+            const monthly = Number(digitsOnly($('#monthly_price_per_month').val()));
+            if (!daily || !monthly || daily <= 0 || monthly <= 0) {
                 e.preventDefault();
                 alert('Giá vé không được để trống và phải lớn hơn 0.');
+                return;
             }
+            $('#daily_price_per_hour').val(String(daily));
+            $('#monthly_price_per_month').val(String(monthly));
         });
     });
 </script>
