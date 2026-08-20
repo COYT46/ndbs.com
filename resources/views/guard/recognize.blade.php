@@ -263,6 +263,7 @@ $(document).ready(function() {
         exit: @json(route('api.checkout_exit', [], false)),
         validate: @json(route('api.validate_checkout', [], false)),
         validateMonthly: @json(route('api.validate_monthly_entry', [], false)),
+        dismissPendingMonthly: @json(route('api.dismiss_pending_monthly_entry', [], false)),
         lookupMonthly: @json(route('api.lookup_monthly_ticket', [], false)),
         scanHoldAck: @json(route('api.scan_hold_ack', [], false)),
         manualEntry: @json(route('api.manual_confirm_entry', [], false)),
@@ -317,6 +318,7 @@ $(document).ready(function() {
     }
 
     function lookupMonthlyIfReady() {
+        if ($('#entry-code').prop('disabled')) return;
         const code = ($('#entry-code').val() || '').trim().toUpperCase();
         if (!code) {
             monthlyLookupSeq++;
@@ -353,6 +355,7 @@ $(document).ready(function() {
         if (nav && nav.type === 'reload') {
             $.post(API.retryExit, {});
             $.post(API.scanHoldAck);
+            $.post(API.dismissPendingMonthly);
         }
     } catch (e) {}
 
@@ -385,9 +388,15 @@ $(document).ready(function() {
         modal.show();
     }
 
+    function setMonthlyCodeLocked(locked) {
+        $('#entry-code').prop('disabled', !!locked);
+        $('#entry-code').closest('.input-group').toggleClass('opacity-75', !!locked);
+    }
+
     function resetMonthlyEntryFields() {
         monthlyLookupSeq++;
         lastLookupMonthly = '';
+        setMonthlyCodeLocked(false);
         $('#entry-code').val('');
         $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
             .text('Để trống nếu vé ngày. Nhập đúng mã vé tháng sẽ hiện xanh.');
@@ -485,6 +494,7 @@ $(document).ready(function() {
         }
         $('#comp-in-status-badge').removeClass('bg-danger text-white').addClass('bg-light text-primary').text('Xe vào OK');
         $('#entry-result').fadeIn();
+        setMonthlyCodeLocked(true);
         if (entryTimerInterval) clearInterval(entryTimerInterval);
         let seconds = 10;
         $('#entry-timer').text(seconds);
@@ -655,7 +665,10 @@ $(document).ready(function() {
             success: function(response) {
                 if (response.success) {
                     if (response.monthly_pending) {
-                        currentMonthlyLogId = response.log_id;
+                        currentMonthlyLogId = response.pending_id || response.log_id;
+                        entryCooldown = true;
+                        $('#entry-file, #btn-entry-recognize').prop('disabled', true);
+                        $('#btn-entry-recognize').html(entryBtnHtml(false));
                         $('#comp-in-reg-plate').text(response.registered_plate || '-');
                         $('#comp-in-plate').text(response.plate_number || '-');
                         if (response.image_url) {
@@ -668,6 +681,7 @@ $(document).ready(function() {
                             .text('BSX không khớp vé tháng');
                         $('#entry-validation-buttons').show();
                         $('#entry-result').hide();
+                        setMonthlyCodeLocked(true);
                     } else {
                         showEntrySuccess(response.plate_number, response.code, response.image_url || null);
                     }
@@ -857,7 +871,9 @@ $(document).ready(function() {
                 hideManualConfirm(side);
                 if (side === 'entry') {
                     if (res.monthly_pending) {
-                        currentMonthlyLogId = res.log_id;
+                        currentMonthlyLogId = res.pending_id || res.log_id;
+                        entryCooldown = true;
+                        $('#entry-file, #btn-entry-recognize').prop('disabled', true);
                         $('#comp-in-reg-plate').text(res.registered_plate || '-');
                         $('#comp-in-plate').text(res.plate_number || '-');
                         if (res.image_url) {
@@ -867,6 +883,7 @@ $(document).ready(function() {
                         $('#comp-in-status-badge').removeClass('bg-light text-primary').addClass('bg-danger text-white')
                             .text('BSX không khớp vé tháng');
                         $('#entry-validation-buttons').show();
+                        setMonthlyCodeLocked(true);
                     } else {
                         showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url || null);
                     }
@@ -921,10 +938,10 @@ $(document).ready(function() {
             $('#confirmModalTitle').html('<span class="text-white"><i class="material-icons-outlined align-middle me-1">warning</i> Xác nhận Không Hợp Lệ</span>');
             $('#confirmModalIcon').html('<i class="material-icons-outlined text-danger" style="font-size: 70px;">gpp_bad</i>');
             $('#confirmModalQuestion').text(kind === 'monthly'
-                ? 'Xác nhận KHÔNG HỢP LỆ — tính vé ngày cho lượt này?'
+                ? 'Xác nhận KHÔNG HỢP LỆ — không cho xe vào và không lưu lượt này?'
                 : 'Xác nhận phương tiện KHÔNG HỢP LỆ (Từ chối cho ra)?');
             $('#confirmModalSubmitBtn').removeClass('btn-success').addClass('btn-danger')
-                .text(kind === 'monthly' ? 'Tính vé ngày' : 'Xác Nhận Từ Chối');
+                .text(kind === 'monthly' ? 'Không cho vào' : 'Xác Nhận Từ Chối');
         }
         confirmModalObj.show();
     }
@@ -951,17 +968,33 @@ $(document).ready(function() {
         const btnSubmit = $(this);
         btnSubmit.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span> Đang xử lý...');
         if (kind === 'monthly') {
-            $.post(API.validateMonthly, { log_id: currentMonthlyLogId, is_valid: isValid }, function(res) {
+            $.post(API.validateMonthly, { log_id: currentMonthlyLogId, pending_id: currentMonthlyLogId, is_valid: isValid }, function(res) {
                 confirmModalObj.hide();
                 if (res.success) {
                     $('#entry-validation-buttons').hide();
                     currentMonthlyLogId = null;
-                    showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url);
+                    if (res.rejected) {
+                        showNotificationModal(false, 'Không cho xe vào', res.message || 'Đã từ chối. Không lưu vào database.');
+                        entryCooldown = false;
+                        $('#entry-file').val('').prop('disabled', false);
+                        $('#btn-entry-recognize').prop('disabled', false).html(entryBtnHtml(false));
+                        $('#entry-camera').hide().attr('src', '');
+                        $('#entry-placeholder').show();
+                        $('#entry-result, #entry-error').hide();
+                        hideManualConfirm('entry');
+                        $('#comp-in-img').hide().attr('src', '');
+                        $('#comp-in-empty').show();
+                        $('#comp-in-plate').text('-');
+                        $('#comp-in-status-badge').removeClass('bg-danger text-white').addClass('bg-light text-primary').text('Chờ nhận diện xe vào');
+                        setMonthlyCodeLocked(false);
+                    } else {
+                        showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url);
+                    }
                 } else {
                     showNotificationModal(false, 'Thao Tác Thất Bại', res.message);
                 }
             }).always(function() {
-                btnSubmit.prop('disabled', false).text(isValid ? 'Đồng ý Cho Vào' : 'Tính vé ngày');
+                btnSubmit.prop('disabled', false).text(isValid ? 'Đồng ý Cho Vào' : 'Không cho vào');
             });
             return;
         }

@@ -25,6 +25,7 @@ Route::middleware(['web', 'auth', 'account.active', 'session.release'])->group(f
         Route::post('/arm-monthly-code', [ApiController::class, 'armMonthlyCode'])->name('api.arm_monthly_code');
         Route::post('/clear-monthly-code', [ApiController::class, 'clearMonthlyCode'])->name('api.clear_monthly_code');
         Route::post('/validate-monthly-entry', [ApiController::class, 'validateMonthlyEntry'])->name('api.validate_monthly_entry');
+        Route::post('/dismiss-pending-monthly-entry', [ApiController::class, 'dismissPendingMonthlyEntry'])->name('api.dismiss_pending_monthly_entry');
         Route::post('/scan-cooldown', [ApiController::class, 'scanCooldown'])->name('api.scan_cooldown');
         Route::post('/scan-hold-ack', [ApiController::class, 'ackScanHold'])->name('api.scan_hold_ack');
     });
@@ -34,5 +35,6 @@ Route::middleware(['web', 'auth', 'account.active', 'session.release'])->group(f
     Route::get('/live-status', [ApiController::class, 'livePreviewStatus'])->name('api.live_status');
     Route::get('/guard-monitor', [ApiController::class, 'guardMonitorState'])->name('api.guard_monitor');
     Route::get('/armed-exit-code', [ApiController::class, 'armedExitCodeStatus'])->name('api.armed_exit_code');
+    Route::get('/armed-monthly-code', [ApiController::class, 'armedMonthlyCodeStatus'])->name('api.armed_monthly_code');
     Route::get('/scan-hold', [ApiController::class, 'scanHoldStatus'])->name('api.scan_hold');
 });

@@ -66,6 +66,7 @@ $(document).ready(function() {
         webrtcSignal: @json(route('guard.webrtc_signal_post', [], false)),
         webrtcPoll: @json(route('guard.webrtc_signal_poll', [], false)),
         armedCode: @json(route('api.armed_exit_code', [], false)),
+        armedMonthly: @json(route('api.armed_monthly_code', [], false)),
         detect: @json(route('api.detect_preview', [], false)),
         preview: @json(route('api.recognize_preview', [], false)),
         entry: @json(route('api.recognize_entry', [], false)),
@@ -94,12 +95,15 @@ $(document).ready(function() {
     let rtcAfter = 0;
     let rtcConnected = false;
     let armedCode = null;
+    let armedMonthlyCode = null;
+    let monthlyHoldClear = false;
     let cooldownUntil = 0;
     let ocrPausedUntil = 0;
     let currentScanPhase = 'detect';
     let pauseTickTimer = null;
     let scanAttempt = 0;
     let insideHold = false;
+    let holdReason = '';
     const FRONTEND_HOLD_S = 10;
     const CLAIM_RETRY_MS = 1000;
     const canvas = document.createElement('canvas');
@@ -124,6 +128,19 @@ $(document).ready(function() {
 
     function setStatus(text) {
         $('#scan-status').text(text);
+    }
+
+    function idleEntryWaiting() {
+        if (armedMonthlyCode) {
+            return 'Mã ' + armedMonthlyCode + ' — đang chờ biển...';
+        }
+        return rtcConnected
+            ? 'LIVE RTC → PC | Đang chờ biển số...'
+            : 'LIVE → màn giám sát | Đang chờ biển số...';
+    }
+
+    function withMonthly(msg) {
+        return armedMonthlyCode ? ('Mã ' + armedMonthlyCode + ' — ' + msg) : msg;
     }
 
     function setScanPhase(phase) {
@@ -358,13 +375,15 @@ $(document).ready(function() {
                     if (!r.ok) throw new Error('HTTP ' + r.status);
                     return r.json().catch(function() { return null; });
                 }).then(function(body) {
-                    if (body && body.hold_scan) {
-                        enterInsideHold();
-                    } else if (insideHold) {
-                        releaseInsideHold();
-                    } else if (body && Number(body.pause_ocr_s) > 0) {
+                    if (body && Number(body.pause_ocr_s) > 0) {
                         const until = Date.now() + (Number(body.pause_ocr_s) * 1000);
                         if (until > ocrPausedUntil) ocrPausedUntil = until;
+                    }
+                    if (body && body.hold_scan) {
+                        enterScanHold(body.hold_reason);
+                    } else if (insideHold) {
+                        releaseInsideHold();
+                    } else if (ocrPausedUntil > Date.now()) {
                         scanning = false;
                         if (scanTimer) {
                             clearTimeout(scanTimer);
@@ -516,7 +535,7 @@ $(document).ready(function() {
                 rtcConnected = true;
                 setStatus(IS_EXIT
                     ? 'LIVE RTC → PC | Chờ quẹt mã...'
-                    : 'LIVE RTC → PC | Đang chờ biển số...');
+                    : idleEntryWaiting());
             } else if (cs === 'failed' || cs === 'closed') {
                 // Không tắt RTC khi 'disconnected' tạm (lúc upload ảnh OCR)
                 rtcConnected = false;
@@ -652,7 +671,7 @@ $(document).ready(function() {
                 $('#scan-result').fadeOut();
                 setStatus(IS_EXIT
                     ? 'Chờ quẹt mã (nhập trên máy tính)...'
-                    : 'LIVE → màn giám sát | Đang chờ biển số...');
+                    : idleEntryWaiting());
                 resumeAfterAttempt(300);
                 return;
             }
@@ -662,8 +681,17 @@ $(document).ready(function() {
         pauseTickTimer = setInterval(tick, 250);
     }
 
-    function enterInsideHold() {
+    function holdStatusText() {
+        if (holdReason === 'monthly_pending') {
+            return 'Chờ máy tính xác nhận Hợp lệ / Không hợp lệ...';
+        }
+        return 'Xe vẫn trong bãi — chờ máy tính bấm Đồng ý...';
+    }
+
+    function enterScanHold(reason) {
+        holdReason = reason || holdReason || 'already_inside';
         if (insideHold) {
+            setStatus(holdStatusText());
             scheduleHoldPoll();
             return;
         }
@@ -676,8 +704,12 @@ $(document).ready(function() {
             scanTimer = null;
         }
         setScanPhase('detect');
-        setStatus('Xe vẫn trong bãi — chờ máy tính bấm Đồng ý...');
+        setStatus(holdStatusText());
         scheduleHoldPoll();
+    }
+
+    function enterInsideHold() {
+        enterScanHold('already_inside');
     }
 
     function scheduleHoldPoll() {
@@ -704,6 +736,10 @@ $(document).ready(function() {
                 releaseInsideHold();
                 return;
             }
+            if (insideHold && res && res.hold_reason) {
+                holdReason = res.hold_reason;
+                setStatus(holdStatusText());
+            }
         }).catch(function() {
             // ignore, poll lại
         }).finally(function() {
@@ -719,9 +755,10 @@ $(document).ready(function() {
             holdPollTimer = null;
         }
         $('#scan-result').fadeOut();
+        holdReason = '';
         setStatus(IS_EXIT
             ? 'Chờ quẹt mã (nhập trên máy tính)...'
-            : 'LIVE → màn giám sát | Đang chờ biển số...');
+            : idleEntryWaiting());
         resumeAfterAttempt(300);
     }
 
@@ -760,11 +797,29 @@ $(document).ready(function() {
         }
     }
 
-    function pollArmedCode() {
-        if (!IS_EXIT) return;
-        if (armedPollTimer) clearTimeout(armedPollTimer);
+    function onArmedMonthlyCode(next) {
+        const normalized = next ? String(next).toUpperCase() : null;
+        if (monthlyHoldClear) {
+            if (normalized) return;
+            monthlyHoldClear = false;
+        }
+        const prev = armedMonthlyCode;
+        armedMonthlyCode = normalized;
+        if (prev === armedMonthlyCode) return;
+        if (busy || insideHold) return;
+        if (Date.now() < ocrPausedUntil) return;
+        if (armedMonthlyCode) {
+            if (!scanning) setStatus(idleEntryWaiting());
+        } else {
+            setStatus(idleEntryWaiting());
+        }
+    }
 
-        fetch(API.armedCode + '?t=' + Date.now(), {
+    function pollArmedCode() {
+        if (armedPollTimer) clearTimeout(armedPollTimer);
+        const url = IS_EXIT ? API.armedCode : API.armedMonthly;
+
+        fetch(url + '?t=' + Date.now(), {
             method: 'GET',
             credentials: 'same-origin',
             headers: {
@@ -776,16 +831,23 @@ $(document).ready(function() {
             return r.json();
         }).then(function(res) {
             if (!res || res.success === false) {
-                setStatus('Lỗi đọc mã — reload trang');
+                if (IS_EXIT) setStatus('Lỗi đọc mã — reload trang');
                 return;
             }
-            if (!busy) {
-                onArmedCode(res.armed_exit_code ? String(res.armed_exit_code).toUpperCase() : null);
+            if (IS_EXIT) {
+                if (!busy) {
+                    onArmedCode(res.armed_exit_code ? String(res.armed_exit_code).toUpperCase() : null);
+                }
+            } else {
+                onArmedMonthlyCode(res.armed_monthly_code || null);
             }
         }).catch(function(err) {
-            setStatus('Không nối máy tính: ' + (err && err.message ? err.message : 'lỗi mạng'));
+            if (IS_EXIT) {
+                setStatus('Không nối máy tính: ' + (err && err.message ? err.message : 'lỗi mạng'));
+            }
         }).finally(function() {
-            armedPollTimer = setTimeout(pollArmedCode, armedCode ? 1200 : 500);
+            const armed = IS_EXIT ? armedCode : armedMonthlyCode;
+            armedPollTimer = setTimeout(pollArmedCode, armed ? 1200 : 500);
         });
     }
 
@@ -819,14 +881,14 @@ $(document).ready(function() {
         setScanPhase('detect');
         setStatus(IS_EXIT
             ? ('Mã ' + codeForThisScan + ' — đang tìm biển... #' + scanAttempt)
-            : ('Đang tìm biển số... #' + scanAttempt));
+            : withMonthly('đang tìm biển số... #' + scanAttempt));
 
         captureFrame(960, 0.75, canvas).then(function(blob) {
             if (!blob || !stream || busy) {
                 scanning = false;
                 setStatus(IS_EXIT
                     ? ('Mã ' + (armedCode || '') + ' — camera chưa sẵn, thử lại...')
-                    : 'Camera chưa sẵn, thử lại...');
+                    : withMonthly('camera chưa sẵn, thử lại...'));
                 ensureScanLoop(400);
                 return;
             }
@@ -848,7 +910,7 @@ $(document).ready(function() {
                     setScanPhase('detect');
                     setStatus(IS_EXIT
                         ? ('Mã ' + (armedCode || codeForThisScan) + ' — chưa thấy biển (#' + scanAttempt + ')')
-                        : ('Chưa thấy biển số (#' + scanAttempt + ')'));
+                        : withMonthly('chưa thấy biển số (#' + scanAttempt + ')'));
                     return;
                 }
 
@@ -857,7 +919,7 @@ $(document).ready(function() {
                 setScanPhase('ocr');
                 setStatus(IS_EXIT
                     ? ('Mã ' + codeForThisScan + ' — thấy biển, đang đọc ký tự...')
-                    : 'Thấy biển — đang đọc ký tự...');
+                    : withMonthly('thấy biển — đang đọc ký tự...'));
 
                 const fdOcr = new FormData();
                 fdOcr.append('image', blob, 'preview.jpg');
@@ -884,13 +946,13 @@ $(document).ready(function() {
                     setScanPhase('detect');
                     setStatus(IS_EXIT
                         ? ('Mã ' + (armedCode || codeForThisScan) + ' — ' + why)
-                        : why);
+                        : withMonthly(why));
                 }).fail(function(xhr) {
                     const st = xhr && xhr.status ? ('HTTP ' + xhr.status) : 'lỗi mạng';
                     setScanPhase('detect');
                     setStatus(IS_EXIT
                         ? ('Mã ' + (armedCode || '') + ' — lỗi đọc ký tự ' + st)
-                        : ('Lỗi đọc ký tự ' + st));
+                        : withMonthly('lỗi đọc ký tự ' + st));
                 }).always(function() {
                     if (!busy) {
                         scanning = false;
@@ -903,7 +965,7 @@ $(document).ready(function() {
                 setScanPhase('detect');
                 setStatus(IS_EXIT
                     ? ('Mã ' + (armedCode || '') + ' — lỗi tìm biển ' + st)
-                    : ('Lỗi tìm biển ' + st));
+                    : withMonthly('lỗi tìm biển ' + st));
             }).always(function() {
                 if (!startedOcr && !busy) {
                     scanning = false;
@@ -922,6 +984,9 @@ $(document).ready(function() {
     function submitEntry(blob, plateHint) {
         const fd = new FormData();
         fd.append('image', blob, 'entry_capture.jpg');
+        if (armedMonthlyCode) {
+            fd.append('monthly_code', armedMonthlyCode);
+        }
         $.ajax({
             url: API.entry,
             type: 'POST',
@@ -930,12 +995,14 @@ $(document).ready(function() {
             contentType: false
         }).done(function(res) {
             if (res && res.success) {
+                armedMonthlyCode = null;
+                monthlyHoldClear = true;
                 if (res.monthly_pending) {
                     showResult(true,
                         '<strong>Chờ xác nhận vé tháng</strong><br>Biển: <b>' + (res.plate_number || plateHint) +
                         '</b><br>' + (res.message || 'BSX không khớp — chờ máy tính xác nhận.')
                     );
-                    holdForFrontendCountdown(res.pause_ocr_s || FRONTEND_HOLD_S);
+                    enterScanHold(res.hold_reason || 'monthly_pending');
                     return;
                 }
                 showResult(true,
@@ -1040,13 +1107,12 @@ $(document).ready(function() {
                 setStatus('Camera mở nhưng chưa sẵn sàng — thử tải lại trang');
             } else {
                 setScanPhase('detect');
-                setStatus(IS_EXIT ? 'LIVE → màn giám sát | Chờ quẹt mã...' : 'LIVE → màn giám sát | Đang chờ biển số...');
+                setStatus(IS_EXIT ? 'LIVE → màn giám sát | Chờ quẹt mã...' : idleEntryWaiting());
             }
             pushLiveFrame();
             startRtcPublisher();
-            if (IS_EXIT) {
-                pollArmedCode();
-            } else {
+            pollArmedCode();
+            if (!IS_EXIT) {
                 scheduleScan();
             }
         } catch (e) {

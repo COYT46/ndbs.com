@@ -159,6 +159,88 @@ class ApiController extends Controller
         return $data;
     }
 
+    private function pendingMonthlyEntryPath()
+    {
+        return $this->monitorStateDir() . DIRECTORY_SEPARATOR . 'pending_monthly_entry.json';
+    }
+
+    private function pendingMonthlyImageFullPath(?string $relative): ?string
+    {
+        $relative = str_replace('\\', '/', (string) $relative);
+        if ($relative === '' || !str_contains($relative, 'uploads/vehicles/')) {
+            return null;
+        }
+        $full = base_path($relative);
+        return is_file($full) ? $full : null;
+    }
+
+    private function deletePendingMonthlyImage(?string $relative): void
+    {
+        $full = $this->pendingMonthlyImageFullPath($relative);
+        if ($full) {
+            @unlink($full);
+        }
+    }
+
+    private function writePendingMonthlyEntry(array $payload): array
+    {
+        $old = $this->readPendingMonthlyEntry();
+        if ($old && ($old['entry_image'] ?? '') !== ($payload['entry_image'] ?? '')) {
+            $this->deletePendingMonthlyImage($old['entry_image'] ?? null);
+        }
+
+        $payload['id'] = 'pm_' . time() . '_' . uniqid();
+        $payload['user_id'] = $this->currentUserScopeId();
+        $payload['ts'] = time();
+        @file_put_contents(
+            $this->pendingMonthlyEntryPath(),
+            json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+        );
+        return $payload;
+    }
+
+    private function readPendingMonthlyEntry(): ?array
+    {
+        $path = $this->pendingMonthlyEntryPath();
+        if (!is_file($path)) {
+            return null;
+        }
+        $data = json_decode((string) @file_get_contents($path), true);
+        if (!is_array($data) || empty($data['id'])) {
+            return null;
+        }
+        return $data;
+    }
+
+    private function clearPendingMonthlyEntry(bool $deleteImage = false): void
+    {
+        $pending = $deleteImage ? $this->readPendingMonthlyEntry() : null;
+        $path = $this->pendingMonthlyEntryPath();
+        if (is_file($path)) {
+            @unlink($path);
+        }
+        if ($deleteImage && $pending) {
+            $this->deletePendingMonthlyImage($pending['entry_image'] ?? null);
+        }
+    }
+
+    private function pendingMonthlyPublicPayload(array $pending): array
+    {
+        return [
+            'log_id' => $pending['id'],
+            'pending_id' => $pending['id'],
+            'code' => $pending['code'] ?? null,
+            'registered_plate' => $pending['registered_plate'] ?? null,
+            'entry_plate' => $pending['plate_number'] ?? null,
+            'plate_number' => $pending['plate_number'] ?? null,
+            'entry_image' => !empty($pending['entry_image']) ? asset($pending['entry_image']) : null,
+            'image_url' => !empty($pending['entry_image']) ? asset($pending['entry_image']) : null,
+            'monthly_match' => false,
+            'message' => 'Biển số nhận diện (' . ($pending['plate_number'] ?? '-')
+                . ') không khớp biển đăng ký vé tháng (' . ($pending['registered_plate'] ?? '-') . ').',
+        ];
+    }
+
     private function resolveMonthlyTicket(Request $request): ?MonthlyTicket
     {
         $code = strtoupper(trim((string) $request->input('monthly_code', '')));
@@ -351,9 +433,31 @@ class ApiController extends Controller
         }
     }
 
+    private function readScanHold(): ?array
+    {
+        $path = $this->scanHoldPath();
+        if (!is_file($path)) {
+            return null;
+        }
+        $data = json_decode((string) @file_get_contents($path), true);
+        if (!is_array($data)) {
+            return ['reason' => 'already_inside'];
+        }
+        if (empty($data['reason'])) {
+            $data['reason'] = 'already_inside';
+        }
+        return $data;
+    }
+
     private function isScanHoldActive()
     {
         return is_file($this->scanHoldPath());
+    }
+
+    private function scanHoldReason(): ?string
+    {
+        $hold = $this->readScanHold();
+        return $hold['reason'] ?? null;
     }
 
     private function clearEntryAlert()
@@ -915,9 +1019,30 @@ class ApiController extends Controller
 
             $monthlyTicket = $this->resolveMonthlyTicket($request);
             $isMonthly = (bool) $monthlyTicket;
-            $code = $this->assignEntryCode($monthlyTicket);
             $monthlyMatch = $isMonthly ? $this->platesMatch($monthlyTicket->plate_number, $plate) : null;
 
+            if ($isMonthly && !$monthlyMatch) {
+                $pending = $this->writePendingMonthlyEntry([
+                    'plate_number' => $plate,
+                    'code' => $monthlyTicket->code,
+                    'ticket_id' => $monthlyTicket->id,
+                    'registered_plate' => $monthlyTicket->plate_number,
+                    'entry_image' => $relativePath,
+                ]);
+                $this->writeScanHold('monthly_pending');
+
+                return response()->json(array_merge($this->pendingMonthlyPublicPayload($pending), [
+                    'success' => true,
+                    'ticket_type' => 'monthly',
+                    'monthly_code' => $monthlyTicket->code,
+                    'monthly_pending' => true,
+                    'hold_scan' => true,
+                    'hold_reason' => 'monthly_pending',
+                    'pause_ocr_s' => 0,
+                ]));
+            }
+
+            $code = $this->assignEntryCode($monthlyTicket);
             $log = VehicleLog::create([
                 'plate_number' => $plate,
                 'code' => $code,
@@ -928,7 +1053,7 @@ class ApiController extends Controller
                 'entry_image' => $relativePath,
                 'guard_in_id' => auth()->id(),
                 'monthly_match' => $monthlyMatch,
-                'monthly_confirmed' => $isMonthly ? ($monthlyMatch ? true : null) : null,
+                'monthly_confirmed' => $isMonthly ? true : null,
                 'fee' => $isMonthly ? 0 : null,
             ]);
 
@@ -937,8 +1062,6 @@ class ApiController extends Controller
             }
 
             $this->writeManualOcrPause(10);
-
-            $pendingMonthly = $isMonthly && !$monthlyMatch;
 
             return response()->json([
                 'success' => true,
@@ -949,13 +1072,11 @@ class ApiController extends Controller
                 'monthly_code' => $isMonthly ? $monthlyTicket->code : null,
                 'registered_plate' => $isMonthly ? $monthlyTicket->plate_number : null,
                 'monthly_match' => $monthlyMatch,
-                'monthly_pending' => $pendingMonthly,
+                'monthly_pending' => false,
                 'image_url' => asset($relativePath),
-                'message' => $pendingMonthly
-                    ? ('Biển số nhận diện (' . $plate . ') không khớp biển đăng ký vé tháng (' . $monthlyTicket->plate_number . '). Vui lòng xác nhận.')
-                    : ($isMonthly
-                        ? ('Nhận diện thành công. Xe vé tháng ' . $monthlyTicket->code . ' đã vào.')
-                        : 'Nhận diện thành công. Xe đã vào.'),
+                'message' => $isMonthly
+                    ? ('Nhận diện thành công. Xe vé tháng ' . $monthlyTicket->code . ' đã vào.')
+                    : 'Nhận diện thành công. Xe đã vào.',
                 'pause_ocr_s' => 10,
             ]);
         } catch (\Exception $e) {
@@ -1118,26 +1239,44 @@ class ApiController extends Controller
         $plate = $this->unrecognizedPlateLabel();
         $monthlyTicket = $this->resolveMonthlyTicket($request);
         $isMonthly = (bool) $monthlyTicket;
-        $code = $this->assignEntryCode($monthlyTicket);
-        $monthlyMatch = $isMonthly ? false : null;
 
+        if ($isMonthly) {
+            $pending = $this->writePendingMonthlyEntry([
+                'plate_number' => $plate,
+                'code' => $monthlyTicket->code,
+                'ticket_id' => $monthlyTicket->id,
+                'registered_plate' => $monthlyTicket->plate_number,
+                'entry_image' => $relativePath,
+            ]);
+            $this->writeScanHold('monthly_pending');
+
+            return response()->json(array_merge($this->pendingMonthlyPublicPayload($pending), [
+                'success' => true,
+                'unrecognized' => true,
+                'ticket_type' => 'monthly',
+                'monthly_code' => $monthlyTicket->code,
+                'monthly_pending' => true,
+                'hold_scan' => true,
+                'hold_reason' => 'monthly_pending',
+                'pause_ocr_s' => 0,
+                'message' => 'Đã chụp xe vào (không thể nhận diện biển). Vui lòng xác nhận Hợp lệ / Không hợp lệ với vé tháng.',
+            ]));
+        }
+
+        $code = $this->generateUniqueVehicleCode();
         $log = VehicleLog::create([
             'plate_number' => $plate,
             'code' => $code,
-            'ticket_type' => $isMonthly ? 'monthly' : 'daily',
-            'monthly_ticket_id' => $isMonthly ? $monthlyTicket->id : null,
+            'ticket_type' => 'daily',
+            'monthly_ticket_id' => null,
             'status' => 'in',
             'entry_time' => now(),
             'entry_image' => $relativePath,
             'guard_in_id' => auth()->id(),
-            'monthly_match' => $monthlyMatch,
-            'monthly_confirmed' => $isMonthly ? null : null,
-            'fee' => $isMonthly ? 0 : null,
+            'monthly_match' => null,
+            'monthly_confirmed' => null,
+            'fee' => null,
         ]);
-
-        if ($isMonthly) {
-            $this->clearArmedMonthlyCode();
-        }
 
         $this->writeManualOcrPause(10);
 
@@ -1147,15 +1286,13 @@ class ApiController extends Controller
             'log_id' => $log->id,
             'plate_number' => $plate,
             'code' => $code,
-            'ticket_type' => $isMonthly ? 'monthly' : 'daily',
-            'monthly_code' => $isMonthly ? $monthlyTicket->code : null,
-            'registered_plate' => $isMonthly ? $monthlyTicket->plate_number : null,
-            'monthly_match' => $monthlyMatch,
-            'monthly_pending' => $isMonthly,
+            'ticket_type' => 'daily',
+            'monthly_code' => null,
+            'registered_plate' => null,
+            'monthly_match' => null,
+            'monthly_pending' => false,
             'image_url' => asset($relativePath),
-            'message' => $isMonthly
-                ? 'Đã chụp xe vào (không thể nhận diện biển). Vui lòng xác nhận Hợp lệ / Không hợp lệ với vé tháng.'
-                : 'Xe đã vào thành công.',
+            'message' => 'Xe đã vào thành công.',
             'pause_ocr_s' => 10,
         ]);
     }
@@ -1251,13 +1388,17 @@ class ApiController extends Controller
      */
     public function ackScanHold()
     {
-        $this->clearScanHold();
+        // F5 / Đồng ý chỉ nhả hold "xe trong bãi". Đối chiếu vé tháng chỉ nhả khi Hợp lệ / Không hợp lệ.
+        if ($this->scanHoldReason() !== 'monthly_pending') {
+            $this->clearScanHold();
+        }
         $this->clearEntryAlert();
         $this->releaseSessionLock();
 
         return response()->json([
             'success' => true,
-            'hold_scan' => false,
+            'hold_scan' => $this->isScanHoldActive(),
+            'hold_reason' => $this->scanHoldReason(),
         ]);
     }
 
@@ -1268,6 +1409,7 @@ class ApiController extends Controller
         return response()->json([
             'success' => true,
             'hold_scan' => $this->isScanHoldActive(),
+            'hold_reason' => $this->scanHoldReason(),
         ], 200, [
             'Cache-Control' => 'no-store, no-cache, must-revalidate',
         ]);
@@ -1546,15 +1688,8 @@ class ApiController extends Controller
             ->orderByDesc('id')
             ->first();
 
-        $pendingMonthlyEntry = VehicleLog::query()
-            ->with('monthlyTicket')
-            ->where('guard_in_id', $uid)
-            ->where('ticket_type', 'monthly')
-            ->whereNotNull('monthly_ticket_id')
-            ->whereNull('monthly_confirmed')
-            ->where('status', 'in')
-            ->orderByDesc('id')
-            ->first();
+        $pendingMonthly = $this->readPendingMonthlyEntry();
+        $pendingMonthlyPayload = $pendingMonthly ? $this->pendingMonthlyPublicPayload($pendingMonthly) : null;
 
         $pendingValidation = VehicleLog::query()
             // Chỉ hiện trên TK đã quét xe ra (checkout) — không hiện trên TK check-in mã đó
@@ -1576,20 +1711,6 @@ class ApiController extends Controller
                 'monthly_code' => $lastEntry->monthlyTicket?->code,
                 'entry_image' => $lastEntry->entry_image ? asset($lastEntry->entry_image) : null,
                 'entry_time' => optional($lastEntry->entry_time)->toDateTimeString(),
-            ];
-        }
-
-        $pendingMonthlyPayload = null;
-        if ($pendingMonthlyEntry) {
-            $ticket = $pendingMonthlyEntry->monthlyTicket;
-            $pendingMonthlyPayload = [
-                'log_id' => $pendingMonthlyEntry->id,
-                'code' => $ticket ? $ticket->code : $pendingMonthlyEntry->code,
-                'registered_plate' => $ticket ? $ticket->plate_number : null,
-                'entry_plate' => $pendingMonthlyEntry->plate_number,
-                'entry_image' => $pendingMonthlyEntry->entry_image ? asset($pendingMonthlyEntry->entry_image) : null,
-                'monthly_match' => (bool) $pendingMonthlyEntry->monthly_match,
-                'message' => 'Biển số nhận diện (' . $pendingMonthlyEntry->plate_number . ') không khớp biển đăng ký vé tháng (' . ($ticket->plate_number ?? '-') . ').',
             ];
         }
 
@@ -1655,6 +1776,7 @@ class ApiController extends Controller
             'armed_monthly_plate' => $armedMonthly['plate_number'] ?? null,
             'entry_alert' => $this->readEntryAlert(),
             'hold_scan' => $this->isScanHoldActive(),
+            'hold_reason' => $this->scanHoldReason(),
             'live_preview' => [
                 // Không nhúng frame ở đây — LIVE dùng /api/live-status riêng
                 'entry' => $this->readLivePreview('entry', 0, false),
@@ -1766,6 +1888,7 @@ class ApiController extends Controller
             'pause_ocr' => $pauseOcr > 0,
             'pause_ocr_s' => $pauseOcr,
             'hold_scan' => $this->isScanHoldActive(),
+            'hold_reason' => $this->scanHoldReason(),
         ]);
     }
 
@@ -1782,6 +1905,7 @@ class ApiController extends Controller
         return response()->json([
             'success' => true,
             'hold_scan' => $this->isScanHoldActive(),
+            'hold_reason' => $this->scanHoldReason(),
             'live_preview' => [
                 'entry' => $this->readLivePreview('entry', $sinceEntry),
                 'exit' => $this->readLivePreview('exit', $sinceExit),
@@ -1846,6 +1970,17 @@ class ApiController extends Controller
         return response()->json([
             'success' => true,
             'armed_exit_code' => $this->readArmedExitCode(),
+        ], 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
+    }
+
+    public function armedMonthlyCodeStatus()
+    {
+        $this->releaseSessionLock();
+        $armed = $this->readArmedMonthlyPayload();
+
+        return response()->json([
+            'success' => true,
+            'armed_monthly_code' => $armed['code'] ?? null,
         ], 200, [], JSON_INVALID_UTF8_SUBSTITUTE);
     }
 
@@ -2205,72 +2340,108 @@ class ApiController extends Controller
         return response()->json(['success' => true]);
     }
 
+    /**
+     * F5 / mở lại trang giám sát: hủy đối chiếu vé tháng chưa xác nhận, không lưu DB.
+     */
+    public function dismissPendingMonthlyEntry()
+    {
+        $this->clearPendingMonthlyEntry(true);
+        if ($this->scanHoldReason() === 'monthly_pending') {
+            $this->clearScanHold();
+        }
+        $this->clearArmedMonthlyCode();
+        $this->releaseSessionLock();
+
+        return response()->json([
+            'success' => true,
+            'hold_scan' => $this->isScanHoldActive(),
+        ]);
+    }
+
     public function validateMonthlyEntry(Request $request)
     {
         $request->validate([
-            'log_id' => 'required',
             'is_valid' => 'required',
         ]);
 
-        $log = VehicleLog::with('monthlyTicket')->find($request->log_id);
-        if (!$log) {
+        $pendingId = (string) $request->input('pending_id', $request->input('log_id', ''));
+        $pending = $this->readPendingMonthlyEntry();
+        if (!$pending) {
             return response()->json([
                 'success' => false,
-                'message' => 'Không tìm thấy thông tin phương tiện!',
+                'message' => 'Không có lượt đối chiếu vé tháng đang chờ.',
             ]);
         }
-
-        if ((int) $log->guard_in_id !== (int) auth()->id()) {
+        if ($pendingId !== '' && (string) ($pending['id'] ?? '') !== $pendingId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Lượt đối chiếu đã hết hạn. Hãy quét lại.',
+            ]);
+        }
+        if ((int) ($pending['user_id'] ?? 0) !== (int) auth()->id()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Không có quyền xác nhận lượt này.',
             ], 403);
         }
 
-        if (($log->ticket_type ?? '') !== 'monthly' || $log->monthly_confirmed !== null) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Lượt này không chờ xác nhận vé tháng.',
-            ]);
-        }
-
         $isValid = filter_var($request->is_valid, FILTER_VALIDATE_BOOLEAN);
-        $monthlyCode = $log->monthlyTicket?->code ?? $log->code;
+        $ticket = MonthlyTicket::findUsableByCode((string) ($pending['code'] ?? ''))
+            ?: MonthlyTicket::find($pending['ticket_id'] ?? 0);
+        $monthlyCode = $ticket?->code ?? ($pending['code'] ?? '');
 
-        if ($isValid) {
-            $log->update([
-                'monthly_confirmed' => true,
-                'monthly_match' => $log->monthly_match,
-                'ticket_type' => 'monthly',
-                'fee' => 0,
-            ]);
+        if (!$isValid) {
+            $this->clearPendingMonthlyEntry(true);
+            $this->clearScanHold();
             return response()->json([
                 'success' => true,
+                'rejected' => true,
                 'ticket_type' => 'monthly',
                 'code' => $monthlyCode,
-                'plate_number' => $log->plate_number,
-                'image_url' => $log->entry_image ? asset($log->entry_image) : null,
-                'message' => 'Đã xác nhận hợp lệ. Xe vào bằng vé tháng ' . $monthlyCode . '.',
+                'plate_number' => $pending['plate_number'] ?? null,
+                'message' => 'Đã từ chối xe vào. Không lưu lượt này.',
+                'pause_ocr_s' => 0,
             ]);
         }
 
-        $dailyCode = $this->generateUniqueVehicleCode();
-        $log->update([
-            'code' => $dailyCode,
-            'ticket_type' => 'daily',
-            'monthly_ticket_id' => null,
+        if (!$ticket || !$ticket->isUsable()) {
+            $this->clearPendingMonthlyEntry(true);
+            $this->clearScanHold();
+            return response()->json([
+                'success' => false,
+                'message' => 'Vé tháng không còn hiệu lực. Không lưu lượt này.',
+            ]);
+        }
+
+        $log = VehicleLog::create([
+            'plate_number' => $pending['plate_number'] ?? $this->unrecognizedPlateLabel(),
+            'code' => strtoupper((string) $ticket->code),
+            'ticket_type' => 'monthly',
+            'monthly_ticket_id' => $ticket->id,
+            'status' => 'in',
+            'entry_time' => now(),
+            'entry_image' => $pending['entry_image'] ?? null,
+            'guard_in_id' => auth()->id(),
             'monthly_match' => false,
-            'monthly_confirmed' => false,
-            'fee' => null,
+            'monthly_confirmed' => true,
+            'fee' => 0,
         ]);
+
+        $this->clearPendingMonthlyEntry(false);
+        $this->clearArmedMonthlyCode();
+        $this->writeManualOcrPause(10);
+        $this->clearScanHold();
 
         return response()->json([
             'success' => true,
-            'ticket_type' => 'daily',
-            'code' => $dailyCode,
+            'rejected' => false,
+            'log_id' => $log->id,
+            'ticket_type' => 'monthly',
+            'code' => $ticket->code,
             'plate_number' => $log->plate_number,
             'image_url' => $log->entry_image ? asset($log->entry_image) : null,
-            'message' => 'Đã xác nhận không hợp lệ. Lượt này tính vé ngày (mã ' . $dailyCode . ').',
+            'message' => 'Đã xác nhận hợp lệ. Xe vào bằng vé tháng ' . $ticket->code . '.',
+            'pause_ocr_s' => 10,
         ]);
     }
 
