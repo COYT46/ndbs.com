@@ -6,8 +6,15 @@
 @php
     $monthlyPrice = (int) $monthlyPrice;
 @endphp
-<div class="row">
-    <div class="col-12 col-lg-8">
+<div class="card shadow-sm border-0">
+    <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <h4 class="mb-0 fw-bold text-primary"><i class="material-icons-outlined align-middle me-2">confirmation_number</i> Quản lý vé tháng</h4>
+        <button type="button" class="btn btn-primary fw-bold d-inline-flex align-items-center shadow-sm"
+            data-bs-toggle="modal" data-bs-target="#addTicketModal">
+            <i class="material-icons-outlined align-middle me-1">add_circle</i> Thêm vé tháng
+        </button>
+    </div>
+    <div class="card-body">
         @if (session('success'))
             <div class="alert alert-success alert-dismissible fade show auto-dismiss-alert" role="alert">
                 {{ session('success') }}
@@ -25,62 +32,74 @@
             </div>
         @endif
 
-        <div class="card shadow-sm border-0 mb-4">
-            <div class="card-body">
-                <h5 class="card-title mb-3 fw-bold">
+        <ul class="nav nav-pills mb-4 gap-2" id="ticketsTab" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active fw-bold px-4 py-2" id="active-tab" data-bs-toggle="tab" data-bs-target="#active" type="button" role="tab" aria-controls="active" aria-selected="true">
                     <i class="material-icons-outlined align-middle me-1">verified</i> Vé tháng còn hạn
-                </h5>
+                    <span class="badge bg-danger ms-1" id="active-count-badge">{{ $activeTickets->count() }}</span>
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link fw-bold px-4 py-2" id="expired-tab" data-bs-toggle="tab" data-bs-target="#expired" type="button" role="tab" aria-controls="expired" aria-selected="false">
+                    <i class="material-icons-outlined align-middle me-1">event_busy</i> Vé tháng hết hạn
+                    <span class="badge bg-success ms-1" id="expired-count-badge">{{ $expiredTickets->count() }}</span>
+                </button>
+            </li>
+        </ul>
+
+        <div class="tab-content">
+            <div class="tab-pane fade show active" id="active" role="tabpanel" aria-labelledby="active-tab">
                 <div class="table-responsive">
-                    <table class="table table-bordered table-hover align-middle">
+                    <table id="activeTable" class="table table-bordered table-hover align-middle w-100">
                         <thead class="table-light">
                             <tr>
-                                <th>STT</th>
+                                <th class="text-center" style="width: 30px;">STT</th>
                                 <th>Mã code</th>
                                 <th>BSX</th>
                                 <th>Ngày tạo</th>
-                                <th>Thao tác</th>
+                                <th class="text-center" style="width: 180px;">Thao tác</th>
                             </tr>
                         </thead>
                         <tbody>
                             @foreach ($activeTickets as $k => $ticket)
                                 @php $allowed = $ticket->allowedDurations(); @endphp
                                 <tr>
-                                    <td>{{ $k + 1 }}</td>
+                                    <td class="text-center">{{ $k + 1 }}</td>
                                     <td><span class="badge bg-primary fs-6">{{ $ticket->code }}</span></td>
-                                    <td class="fw-semibold">{{ $ticket->plate_number }}</td>
+                                    <td><strong class="text-danger fs-6">{{ $ticket->plate_number }}</strong></td>
                                     <td>{{ $ticket->created_at->format('d/m/Y') }}</td>
-                                    <td>
-                                        <div class="d-flex gap-1 flex-wrap">
-                                            <button type="button" class="btn btn-sm btn-outline-info d-flex align-items-center"
+                                    <td class="text-center">
+                                        <div class="d-flex gap-1 flex-wrap justify-content-center">
+                                            <button type="button" class="btn btn-sm btn-info text-white d-inline-flex align-items-center"
                                                 data-bs-toggle="modal" data-bs-target="#viewTicketModal{{ $ticket->id }}" title="Xem">
-                                                <i class="material-icons-outlined" style="font-size: 20px;">visibility</i>
+                                                <i class="material-icons-outlined">visibility</i>
                                             </button>
-                                            <button type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center"
+                                            <button type="button" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center"
                                                 data-bs-toggle="modal" data-bs-target="#editTicketModal{{ $ticket->id }}" title="Sửa">
-                                                <i class="material-icons-outlined" style="font-size: 20px;">edit</i>
+                                                <i class="material-icons-outlined">edit</i>
                                             </button>
                                             <form action="{{ route('manager.monthly_tickets.toggle_status', $ticket->id) }}" method="POST">
                                                 @csrf
                                                 @method('PATCH')
                                                 @if (!$ticket->is_active)
-                                                    <button type="submit" class="btn btn-sm btn-outline-success d-flex align-items-center" title="Kích hoạt">
-                                                        <i class="material-icons-outlined" style="font-size: 20px;">lock_open</i>
+                                                    <button type="submit" class="btn btn-sm btn-outline-success d-inline-flex align-items-center" title="Kích hoạt">
+                                                        <i class="material-icons-outlined">lock_open</i>
                                                     </button>
                                                 @else
-                                                    <button type="submit" class="btn btn-sm btn-outline-warning d-flex align-items-center" title="Vô hiệu hóa">
-                                                        <i class="material-icons-outlined" style="font-size: 20px;">block</i>
+                                                    <button type="submit" class="btn btn-sm btn-outline-warning d-inline-flex align-items-center" title="Vô hiệu hóa">
+                                                        <i class="material-icons-outlined">block</i>
                                                     </button>
                                                 @endif
                                             </form>
-                                            <button type="button" class="btn btn-sm btn-outline-danger d-flex align-items-center"
+                                            <button type="button" class="btn btn-sm btn-outline-danger d-inline-flex align-items-center"
                                                 data-bs-toggle="modal" data-bs-target="#deleteTicketModal{{ $ticket->id }}" title="Xóa">
-                                                <i class="material-icons-outlined" style="font-size: 20px;">delete</i>
+                                                <i class="material-icons-outlined">delete</i>
                                             </button>
                                         </div>
 
                                         <div class="modal fade" id="viewTicketModal{{ $ticket->id }}" tabindex="-1" aria-hidden="true">
                                             <div class="modal-dialog modal-dialog-centered">
-                                                <div class="modal-content">
+                                                <div class="modal-content text-start">
                                                     <div class="modal-header bg-info text-white">
                                                         <h5 class="modal-title text-white">Chi tiết vé tháng {{ $ticket->code }}</h5>
                                                         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
@@ -188,55 +207,45 @@
                                     </td>
                                 </tr>
                             @endforeach
-                            @if ($activeTickets->isEmpty())
-                                <tr>
-                                    <td colspan="5" class="text-center text-muted py-4">Chưa có vé tháng còn hạn.</td>
-                                </tr>
-                            @endif
                         </tbody>
                     </table>
                 </div>
             </div>
-        </div>
 
-        <div class="card shadow-sm border-0">
-            <div class="card-body">
-                <h5 class="card-title mb-3 fw-bold">
-                    <i class="material-icons-outlined align-middle me-1">event_busy</i> Vé tháng hết hạn
-                </h5>
+            <div class="tab-pane fade" id="expired" role="tabpanel" aria-labelledby="expired-tab">
                 <div class="table-responsive">
-                    <table class="table table-bordered table-hover align-middle">
+                    <table id="expiredTable" class="table table-bordered table-hover align-middle w-100">
                         <thead class="table-light">
                             <tr>
-                                <th>STT</th>
+                                <th class="text-center" style="width: 30px;">STT</th>
                                 <th>Mã code</th>
                                 <th>BSX</th>
                                 <th>Ngày tạo</th>
-                                <th>Thao tác</th>
+                                <th class="text-center" style="width: 140px;">Thao tác</th>
                             </tr>
                         </thead>
                         <tbody>
                             @foreach ($expiredTickets as $k => $ticket)
                                 <tr>
-                                    <td>{{ $k + 1 }}</td>
+                                    <td class="text-center">{{ $k + 1 }}</td>
                                     <td><span class="badge bg-secondary fs-6">{{ $ticket->code }}</span></td>
-                                    <td class="fw-semibold">{{ $ticket->plate_number }}</td>
+                                    <td><strong class="text-danger fs-6">{{ $ticket->plate_number }}</strong></td>
                                     <td>{{ $ticket->created_at->format('d/m/Y') }}</td>
-                                    <td>
-                                        <div class="d-flex gap-1">
-                                            <button type="button" class="btn btn-sm btn-outline-info d-flex align-items-center"
+                                    <td class="text-center">
+                                        <div class="d-flex gap-1 justify-content-center">
+                                            <button type="button" class="btn btn-sm btn-info text-white d-inline-flex align-items-center"
                                                 data-bs-toggle="modal" data-bs-target="#viewExpiredModal{{ $ticket->id }}" title="Xem">
-                                                <i class="material-icons-outlined" style="font-size: 20px;">visibility</i>
+                                                <i class="material-icons-outlined">visibility</i>
                                             </button>
-                                            <button type="button" class="btn btn-sm btn-outline-success d-flex align-items-center"
+                                            <button type="button" class="btn btn-sm btn-outline-success d-inline-flex align-items-center"
                                                 data-bs-toggle="modal" data-bs-target="#renewTicketModal{{ $ticket->id }}" title="Gia hạn">
-                                                <i class="material-icons-outlined" style="font-size: 20px;">autorenew</i>
+                                                <i class="material-icons-outlined">autorenew</i>
                                             </button>
                                         </div>
 
                                         <div class="modal fade" id="viewExpiredModal{{ $ticket->id }}" tabindex="-1" aria-hidden="true">
                                             <div class="modal-dialog modal-dialog-centered">
-                                                <div class="modal-content">
+                                                <div class="modal-content text-start">
                                                     <div class="modal-header bg-secondary text-white">
                                                         <h5 class="modal-title text-white">Chi tiết vé tháng {{ $ticket->code }}</h5>
                                                         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
@@ -307,27 +316,26 @@
                                     </td>
                                 </tr>
                             @endforeach
-                            @if ($expiredTickets->isEmpty())
-                                <tr>
-                                    <td colspan="5" class="text-center text-muted py-4">Không có vé tháng hết hạn.</td>
-                                </tr>
-                            @endif
                         </tbody>
                     </table>
                 </div>
             </div>
         </div>
     </div>
+</div>
 
-    <div class="col-12 col-lg-4">
-        <div class="card shadow-sm border-0">
-            <div class="card-body">
-                <h5 class="card-title fw-bold">
-                    <i class="material-icons-outlined align-middle me-1">add_card</i> Thêm vé tháng
-                </h5>
-                <hr>
-                <form action="{{ route('manager.monthly_tickets.store') }}" method="POST" id="add-monthly-form">
-                    @csrf
+<div class="modal fade" id="addTicketModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form action="{{ route('manager.monthly_tickets.store') }}" method="POST" id="add-monthly-form">
+                @csrf
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title text-white">
+                        <i class="material-icons-outlined align-middle me-1">add_card</i> Thêm vé tháng
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-start">
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Mã vé tháng</label>
                         <input type="text" class="form-control" value="{{ $nextCode }}" disabled>
@@ -347,20 +355,44 @@
                         </select>
                     </div>
                     <div class="mb-2 fw-semibold">Giá tiền: <span id="add-price" class="text-primary">{{ format_vnd($monthlyPrice) }}</span></div>
-                    <div class="text-muted mb-3">Ngày hết hạn: <span id="add-expiry"></span></div>
-                    <button type="submit" class="btn btn-primary w-100 fw-bold py-2">
+                    <div class="text-muted">Ngày hết hạn: <span id="add-expiry"></span></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Hủy</button>
+                    <button type="submit" class="btn btn-primary fw-bold">
                         <i class="material-icons-outlined align-middle me-1">add_circle</i> Thêm vé tháng
                     </button>
-                </form>
-            </div>
+                </div>
+            </form>
         </div>
     </div>
 </div>
 @endsection
 
+@push('css')
+    <link href="{{ asset('public/admin/assets/plugins/datatable/css/dataTables.bootstrap5.min.css') }}" rel="stylesheet" />
+@endpush
+
 @push('js')
+    <script src="{{ asset('public/admin/assets/plugins/datatable/js/jquery.dataTables.min.js') }}"></script>
+    <script src="{{ asset('public/admin/assets/plugins/datatable/js/dataTables.bootstrap5.min.js') }}"></script>
 <script>
     const MONTHLY_PRICE = {{ (int) $monthlyPrice }};
+    const dtLanguageVi = {
+        "sProcessing":   "Đang xử lý...",
+        "sLengthMenu":   "Xem _MENU_ mục",
+        "sZeroRecords":  "Không tìm thấy dòng nào phù hợp",
+        "sInfo":         "Đang xem _START_ đến _END_ trong tổng số _TOTAL_ mục",
+        "sInfoEmpty":    "Đang xem 0 đến 0 trong tổng số 0 mục",
+        "sInfoFiltered": "(được lọc từ _MAX_ mục)",
+        "sSearch":       "Tìm kiếm:",
+        "oPaginate": {
+            "sFirst":    "Đầu",
+            "sPrevious": "Trước",
+            "sNext":     "Tiếp",
+            "sLast":     "Cuối"
+        }
+    };
 
     function addDaysYmd(ymd, days) {
         const p = (ymd || '').split('-');
@@ -387,7 +419,26 @@
         $(expiryEl).text(formatVi(addDaysYmd(startYmd || todayYmd(), months * 30)));
     }
 
+    function initDataTables() {
+        if ($.fn.DataTable.isDataTable('#activeTable')) $('#activeTable').DataTable().destroy();
+        $('#activeTable').DataTable({ "language": dtLanguageVi, "autoWidth": false });
+
+        if ($.fn.DataTable.isDataTable('#expiredTable')) $('#expiredTable').DataTable().destroy();
+        $('#expiredTable').DataTable({ "language": dtLanguageVi, "autoWidth": false });
+    }
+
+    function showTab(tabId) {
+        const tabEl = document.querySelector(tabId);
+        if (tabEl && window.bootstrap && bootstrap.Tab) {
+            bootstrap.Tab.getOrCreateInstance(tabEl).show();
+        } else if (tabEl) {
+            $(tabEl).tab('show');
+        }
+    }
+
     $(document).ready(function() {
+        const TAB_KEY = 'monthly_tickets_active_tab';
+
         setTimeout(function() {
             $('.auto-dismiss-alert').each(function() {
                 const el = this;
@@ -399,8 +450,30 @@
             });
         }, 3500);
 
+        const savedTab = localStorage.getItem(TAB_KEY);
+        @if ($errors->any() && old('_renew_ticket_id'))
+            showTab('#expired-tab');
+        @elseif ($errors->any() && old('_edit_ticket_id'))
+            showTab('#active-tab');
+        @else
+            if (savedTab === 'expired') {
+                showTab('#expired-tab');
+            }
+        @endif
+
+        initDataTables();
+
+        $('button[data-bs-toggle="tab"]').on('shown.bs.tab', function (e) {
+            const target = $(e.target).attr('data-bs-target');
+            localStorage.setItem(TAB_KEY, target === '#expired' ? 'expired' : 'active');
+            $.fn.dataTable.tables({ visible: true, api: true }).columns.adjust();
+        });
+
         updatePriceExpiry('#add-duration', '#add-price', '#add-expiry', todayYmd());
         $('#add-duration').on('change', function() {
+            updatePriceExpiry('#add-duration', '#add-price', '#add-expiry', todayYmd());
+        });
+        $('#addTicketModal').on('shown.bs.modal', function() {
             updatePriceExpiry('#add-duration', '#add-price', '#add-expiry', todayYmd());
         });
 
@@ -447,6 +520,12 @@
             const renewModal = document.getElementById('renewTicketModal{{ old('_renew_ticket_id') }}');
             if (renewModal && window.bootstrap && bootstrap.Modal) {
                 bootstrap.Modal.getOrCreateInstance(renewModal).show();
+            }
+        @endif
+        @if ($errors->any() && !old('_edit_ticket_id') && !old('_renew_ticket_id'))
+            const addModal = document.getElementById('addTicketModal');
+            if (addModal && window.bootstrap && bootstrap.Modal) {
+                bootstrap.Modal.getOrCreateInstance(addModal).show();
             }
         @endif
     });
