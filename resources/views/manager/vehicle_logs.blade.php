@@ -127,7 +127,6 @@
                                 <th>Thời gian vào</th>
                                 <th>BSX ra</th>
                                 <th>Thời gian ra</th>
-                                <th>Giá tiền</th>
                                 <th class="text-center" style="width: 100px;">Thao tác</th>
                             </tr>
                         </thead>
@@ -140,7 +139,6 @@
                                 <td>{{ \Carbon\Carbon::parse($log->entry_time)->format('d/m/Y H:i:s') }}</td>
                                 <td><strong class="text-success">{{ $log->exit_plate_number ?? $log->plate_number }}</strong></td>
                                 <td>{{ $log->exit_time ? \Carbon\Carbon::parse($log->exit_time)->format('d/m/Y H:i:s') : '-' }}</td>
-                                <td><strong>{{ format_vnd($log->fee ?? 0) }}</strong></td>
                                 <td class="text-center">
                                     <button type="button" class="btn btn-sm btn-info text-white d-inline-flex align-items-center"
                                         data-bs-toggle="modal" data-bs-target="#viewCompletedModal{{ $log->id }}" title="Xem chi tiết">
@@ -361,7 +359,6 @@
                                 <td>${log.entry_time}</td>
                                 <td><strong class="text-success">${log.exit_plate_number || log.plate_number}</strong></td>
                                 <td>${log.exit_time || '-'}</td>
-                                <td><strong>${log.fee_text || '0 VNĐ'}</strong></td>
                                 <td class="text-center">
                                     <button type="button" class="btn btn-sm btn-info text-white d-inline-flex align-items-center"
                                         data-bs-toggle="modal" data-bs-target="#viewCompletedModal${log.id}" title="Xem chi tiết">

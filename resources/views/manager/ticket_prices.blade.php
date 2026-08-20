@@ -11,7 +11,7 @@
                     <i class="material-icons-outlined align-middle me-1">payments</i>
                     Cài đặt giá vé
                 </h5>
-                <p class="text-muted mb-4">Giá vé ngày tính theo giờ (làm tròn lên). Giá vé tháng tính theo 30 ngày.</p>
+                <p class="text-muted mb-4"></p>
 
                 @if (session('success'))
                     <div class="alert alert-success alert-dismissible fade show auto-dismiss-alert" role="alert">
@@ -35,14 +35,14 @@
                         <input type="text" inputmode="numeric" autocomplete="off" class="form-control form-control-lg"
                             name="daily_price_per_hour" id="daily_price_per_hour"
                             value="{{ number_format((int) old('daily_price_per_hour', $dailyPrice), 0, ',', '.') }}" required>
-                        <small class="text-muted">Mặc định 1.000 VNĐ / giờ. Không được để trống hoặc ≤ 0.</small>
+                        <small class="text-muted"></small>
                     </div>
                     <div class="mb-4">
                         <label class="form-label fw-semibold">Giá vé tháng (VNĐ / 1 tháng)</label>
                         <input type="text" inputmode="numeric" autocomplete="off" class="form-control form-control-lg"
                             name="monthly_price_per_month" id="monthly_price_per_month"
                             value="{{ number_format((int) old('monthly_price_per_month', $monthlyPrice), 0, ',', '.') }}" required>
-                        <small class="text-muted">Mặc định 100.000 VNĐ / tháng (30 ngày). Không được để trống hoặc ≤ 0.</small>
+                        <small class="text-muted"></small>
                     </div>
                     <button type="submit" class="btn btn-primary w-100 fw-bold py-2">
                         <i class="material-icons-outlined align-middle me-1">save</i> Lưu

@@ -21,7 +21,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
             </div>
         @endif
-        @if ($errors->any() && !old('_edit_ticket_id') && !old('_renew_ticket_id'))
+        @if ($errors->any() && !old('_edit_ticket_id') && !old('_renew_ticket_id') && !old('_add_ticket'))
             <div class="alert alert-danger alert-dismissible fade show auto-dismiss-alert" role="alert">
                 @foreach ($errors->all() as $error)
                     @if ($error !== '')
@@ -62,7 +62,6 @@
                         </thead>
                         <tbody>
                             @foreach ($activeTickets as $k => $ticket)
-                                @php $allowed = $ticket->allowedDurations(); @endphp
                                 <tr>
                                     <td class="text-center">{{ $k + 1 }}</td>
                                     <td><span class="badge bg-primary fs-6">{{ $ticket->code }}</span></td>
@@ -158,19 +157,9 @@
                                                                 <input type="text" class="form-control edit-plate" name="plate_number"
                                                                     value="{{ $ticket->plate_number }}" data-original="{{ $ticket->plate_number }}" required>
                                                             </div>
-                                                            <div class="mb-3">
-                                                                <label class="form-label fw-bold">Thời hạn</label>
-                                                                <select class="form-select edit-duration" name="duration_months" data-original="{{ $ticket->duration_months }}">
-                                                                    @foreach ([1,2,3,4] as $m)
-                                                                        <option value="{{ $m }}" {{ (int) $ticket->duration_months === $m ? 'selected' : '' }}
-                                                                            {{ !in_array($m, $allowed, true) ? 'disabled' : '' }}>
-                                                                            {{ $m }} tháng
-                                                                        </option>
-                                                                    @endforeach
-                                                                </select>
-                                                            </div>
-                                                            <div class="mb-2 fw-semibold">Giá tiền: <span class="edit-price text-primary">{{ format_vnd($ticket->price) }}</span></div>
-                                                            <div class="text-muted">Ngày hết hạn: <span class="edit-expiry">{{ $ticket->expires_on->format('d/m/Y') }}</span></div>
+                                                            <div class="mb-2 fw-semibold">Thời hạn: <span class="text-primary">{{ $ticket->duration_months }} tháng</span></div>
+                                                            <div class="mb-2 fw-semibold">Giá tiền: <span class="text-primary">{{ format_vnd($ticket->price) }}</span></div>
+                                                            <div class="text-muted">Ngày hết hạn: {{ $ticket->expires_on->format('d/m/Y') }}</div>
                                                         </div>
                                                         <div class="modal-footer">
                                                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Hủy</button>
@@ -329,6 +318,7 @@
         <div class="modal-content">
             <form action="{{ route('manager.monthly_tickets.store') }}" method="POST" id="add-monthly-form">
                 @csrf
+                <input type="hidden" name="_add_ticket" value="1">
                 <div class="modal-header bg-primary text-white">
                     <h5 class="modal-title text-white">
                         <i class="material-icons-outlined align-middle me-1">add_card</i> Thêm vé tháng
@@ -336,6 +326,13 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body text-start">
+                    @if ($errors->any() && old('_add_ticket'))
+                        <div class="alert alert-danger py-2 add-ticket-error auto-dismiss-alert">
+                            @foreach ($errors->all() as $error)
+                                @if ($error !== '') <div>{{ $error }}</div> @endif
+                            @endforeach
+                        </div>
+                    @endif
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Mã vé tháng</label>
                         <input type="text" class="form-control" value="{{ $nextCode }}" disabled>
@@ -476,27 +473,20 @@
         $('#addTicketModal').on('shown.bs.modal', function() {
             updatePriceExpiry('#add-duration', '#add-price', '#add-expiry', todayYmd());
         });
+        $('#addTicketModal').on('hidden.bs.modal', function() {
+            $(this).find('.add-ticket-error').remove();
+            $(this).find('input[name="plate_number"]').val('');
+            $('#add-duration').val('1');
+            updatePriceExpiry('#add-duration', '#add-price', '#add-expiry', todayYmd());
+        });
 
         $('.edit-ticket-modal').each(function() {
             const modal = this;
-            const start = modal.getAttribute('data-start');
-            const dur = $(modal).find('.edit-duration');
             const plate = $(modal).find('.edit-plate');
-            const update = function() {
-                updatePriceExpiry(dur, $(modal).find('.edit-price'), $(modal).find('.edit-expiry'), start);
-            };
-            const restore = function() {
+            $(modal).on('hidden.bs.modal', function() {
                 plate.val(plate.attr('data-original') || '');
-                const originalDuration = String(dur.attr('data-original') || '');
-                if (originalDuration) {
-                    dur.val(originalDuration);
-                }
                 $(modal).find('.edit-ticket-error').hide();
-                update();
-            };
-            dur.on('change', update);
-            $(modal).on('hidden.bs.modal', restore);
-            update();
+            });
         });
 
         $('.renew-ticket-modal').each(function() {
@@ -522,7 +512,7 @@
                 bootstrap.Modal.getOrCreateInstance(renewModal).show();
             }
         @endif
-        @if ($errors->any() && !old('_edit_ticket_id') && !old('_renew_ticket_id'))
+        @if ($errors->any() && old('_add_ticket'))
             const addModal = document.getElementById('addTicketModal');
             if (addModal && window.bootstrap && bootstrap.Modal) {
                 bootstrap.Modal.getOrCreateInstance(addModal).show();

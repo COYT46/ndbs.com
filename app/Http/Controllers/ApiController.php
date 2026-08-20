@@ -157,7 +157,7 @@ class ApiController extends Controller
             return null;
         }
         $ticket = MonthlyTicket::findUsableByCode((string) $data['code']);
-        if (!$ticket) {
+        if (!$ticket || $this->findOccupiedMonthlyLog($ticket)) {
             @unlink($path);
             return null;
         }
@@ -256,7 +256,33 @@ class ApiController extends Controller
         if ($code === '') {
             return null;
         }
-        return MonthlyTicket::findUsableByCode($code);
+        $ticket = MonthlyTicket::findUsableByCode($code);
+        if (!$ticket || $this->findOccupiedMonthlyLog($ticket)) {
+            return null;
+        }
+        return $ticket;
+    }
+
+    /**
+     * Vé tháng đang có xe trong bãi (chưa ra) — không cho dùng lại mã này.
+     */
+    private function findOccupiedMonthlyLog(?MonthlyTicket $ticket): ?VehicleLog
+    {
+        if (!$ticket) {
+            return null;
+        }
+
+        return VehicleLog::query()
+            ->where('status', 'in')
+            ->where(function ($q) use ($ticket) {
+                $q->where('monthly_ticket_id', $ticket->id)
+                    ->orWhere(function ($q2) use ($ticket) {
+                        $q2->where('ticket_type', 'monthly')
+                            ->where('code', $ticket->code);
+                    });
+            })
+            ->latest('id')
+            ->first();
     }
 
     private function findOpenLogByCode(string $code): ?VehicleLog
@@ -370,6 +396,21 @@ class ApiController extends Controller
                 'expired' => true,
                 'code' => $code,
                 'message' => 'Vé tháng đã hết hạn.',
+            ];
+        }
+
+        $occupied = $this->findOccupiedMonthlyLog($ticket);
+        if ($occupied) {
+            $plate = trim((string) ($occupied->plate_number ?: ''));
+            return [
+                'success' => true,
+                'found' => false,
+                'in_use' => true,
+                'code' => $ticket->code,
+                'occupied_plate' => $plate !== '' ? $plate : null,
+                'message' => 'Vé tháng đang có xe'
+                    . ($plate !== '' ? (' ' . $plate) : '')
+                    . ' trong bãi (chưa ra) — sẽ tính vé ngày.',
             ];
         }
 
@@ -1682,6 +1723,7 @@ class ApiController extends Controller
                     'is_valid' => $log->is_valid,
                     'ticket_type' => $log->ticket_type ?? 'daily',
                     'monthly_code' => $log->monthlyTicket?->code,
+                    'registered_plate' => $log->monthlyTicket?->plate_number,
                     'fee' => (int) ($log->fee ?? 0),
                     'fee_text' => ParkingFee::formatVnd((int) ($log->fee ?? 0)),
                 ];
@@ -1717,6 +1759,7 @@ class ApiController extends Controller
                     'exit_image' => $log->exit_image ? asset($log->exit_image) : null,
                     'ticket_type' => $log->ticket_type ?? 'daily',
                     'monthly_code' => $log->monthlyTicket?->code,
+                    'registered_plate' => $log->monthlyTicket?->plate_number,
                     'fee' => (int) ($log->fee ?? 0),
                     'fee_text' => ParkingFee::formatVnd((int) ($log->fee ?? 0)),
                 ];
@@ -2527,6 +2570,15 @@ class ApiController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Vé tháng không còn hiệu lực. Không lưu lượt này.',
+            ]);
+        }
+
+        if ($this->findOccupiedMonthlyLog($ticket)) {
+            $this->clearPendingMonthlyEntry(true);
+            $this->clearScanHold();
+            return response()->json([
+                'success' => false,
+                'message' => 'Vé tháng đang có xe trong bãi (chưa ra). Không lưu lượt vé tháng này.',
             ]);
         }
 

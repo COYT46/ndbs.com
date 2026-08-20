@@ -81,6 +81,9 @@
                                                                     <span>Mã vé tháng:</span> <strong class="text-primary">{{ $log->monthlyTicket?->code ?? $log->code }}</strong>
                                                                 </li>
                                                                 <li class="list-group-item d-flex justify-content-between">
+                                                                    <span>BSX đăng ký:</span> <strong class="text-success">{{ $log->monthlyTicket?->plate_number ?? '-' }}</strong>
+                                                                </li>
+                                                                <li class="list-group-item d-flex justify-content-between">
                                                                     <span>BSX vào:</span> <strong class="text-danger fs-5">{{ $log->plate_number }}</strong>
                                                                 </li>
                                                                 <li class="list-group-item d-flex justify-content-between">
@@ -127,7 +130,6 @@
                                 <th>Thời gian vào</th>
                                 <th>BSX ra</th>
                                 <th>Thời gian ra</th>
-                                <th>Giá tiền</th>
                                 <th class="text-center" style="width: 100px;">Thao tác</th>
                             </tr>
                         </thead>
@@ -140,7 +142,6 @@
                                 <td>{{ \Carbon\Carbon::parse($log->entry_time)->format('d/m/Y H:i:s') }}</td>
                                 <td><strong class="text-success">{{ $log->exit_plate_number ?? $log->plate_number }}</strong></td>
                                 <td>{{ $log->exit_time ? \Carbon\Carbon::parse($log->exit_time)->format('d/m/Y H:i:s') : '-' }}</td>
-                                <td><strong>Vé tháng</strong></td>
                                 <td class="text-center">
                                     <button type="button" class="btn btn-sm btn-info text-white d-inline-flex align-items-center"
                                         data-bs-toggle="modal" data-bs-target="#viewCompletedModal{{ $log->id }}" title="Xem chi tiết">
@@ -179,6 +180,9 @@
                                                                 </li>
                                                                 <li class="list-group-item d-flex justify-content-between">
                                                                     <span>Bảo vệ check-in:</span> <strong class="text-dark">{{ $log->guardIn->fullname ?? 'N/A' }}</strong>
+                                                                </li>
+                                                                <li class="list-group-item d-flex justify-content-between">
+                                                                    <span>BSX đăng ký:</span> <strong class="text-success">{{ $log->monthlyTicket?->plate_number ?? '-' }}</strong>
                                                                 </li>
                                                             </ul>
                                                         </div>
@@ -334,6 +338,7 @@
                                                 <div class="col-12 col-md-6 d-flex flex-column justify-content-center">
                                                     <ul class="list-group list-group-flush fs-6">
                                                         <li class="list-group-item d-flex justify-content-between"><span>Mã vé tháng:</span> <strong class="text-primary">${code}</strong></li>
+                                                        <li class="list-group-item d-flex justify-content-between"><span>BSX đăng ký:</span> <strong class="text-success">${log.registered_plate || '-'}</strong></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>BSX vào:</span> <strong class="text-danger fs-5">${log.plate_number}</strong></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>Thời gian vào:</span> <span>${log.entry_time}</span></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>Bảo vệ check-in:</span> <strong class="text-dark">${log.guard_in}</strong></li>
@@ -363,7 +368,6 @@
                                 <td>${log.entry_time}</td>
                                 <td><strong class="text-success">${log.exit_plate_number || log.plate_number}</strong></td>
                                 <td>${log.exit_time || '-'}</td>
-                                <td><strong>Vé tháng</strong></td>
                                 <td class="text-center">
                                     <button type="button" class="btn btn-sm btn-info text-white d-inline-flex align-items-center"
                                         data-bs-toggle="modal" data-bs-target="#viewCompletedModal${log.id}" title="Xem chi tiết">
@@ -391,6 +395,7 @@
                                                         <li class="list-group-item d-flex justify-content-between"><span>BSX vào:</span> <strong class="text-danger fs-5">${log.plate_number}</strong></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>Thời gian vào:</span> <span>${log.entry_time}</span></li>
                                                         <li class="list-group-item d-flex justify-content-between"><span>Bảo vệ check-in:</span> <strong class="text-dark">${log.guard_in}</strong></li>
+                                                        <li class="list-group-item d-flex justify-content-between"><span>BSX đăng ký:</span> <strong class="text-success">${log.registered_plate || '-'}</strong></li>
                                                     </ul>
                                                 </div>
                                                 <div class="col-12 col-md-6">

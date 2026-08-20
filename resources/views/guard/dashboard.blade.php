@@ -55,7 +55,7 @@
                         <input type="text" id="entry-code" class="form-control text-uppercase fw-bold" placeholder="A00001" maxlength="6">
                     </div>
                     <small id="entry-code-arm-hint" class="text-muted d-block mb-2" style="font-size: 13px;">
-                        Để trống nếu vé ngày. Nhập đúng mã vé tháng sẽ hiện xanh.
+                        Để trống nếu vé ngày.
                     </small>
 
                     <button type="button" id="btn-manual-entry" class="btn btn-primary w-100 fw-bold shadow-sm mb-2" disabled title="Chỉ bấm được khi camera đang kết nối">
@@ -652,7 +652,7 @@ $(document).ready(function() {
     function resetMonthlyLookupUi(kind, message) {
         if (kind === 'idle') {
             $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
-                .text(message || 'Để trống nếu vé ngày. Nhập đúng mã vé tháng sẽ hiện xanh.');
+                .text(message || 'Để trống nếu vé ngày.');
         } else if (kind === 'ok') {
             $('#entry-code-arm-hint').removeClass('text-muted text-danger').addClass('text-success')
                 .text(message || '');
@@ -968,7 +968,7 @@ $(document).ready(function() {
         setMonthlyCodeLocked(false);
         $('#entry-code').val('');
         $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
-            .text('Để trống nếu vé ngày. Nhập đúng mã vé tháng sẽ hiện xanh.');
+            .text('Để trống nếu vé ngày.');
         $('#comp-in-reg-plate').text('-');
         $.post(API.clearMonthly);
     }
@@ -1286,7 +1286,7 @@ $(document).ready(function() {
                     setMonthlyCodeLocked(false);
                     $('#entry-code').val('');
                     $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
-                        .text('Để trống nếu vé ngày. Nhập đúng mã vé tháng sẽ hiện xanh.');
+                        .text('Để trống nếu vé ngày.');
                     $('#entry-validation-buttons').hide();
                     $('#comp-in-reg-plate').text('-');
                     $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
@@ -1633,12 +1633,7 @@ $(document).ready(function() {
                     currentMonthlyLogId = null;
                     if (res.rejected) {
                         showNotificationModal(false, 'Không cho xe vào', res.message || 'Đã từ chối. Không lưu vào database.');
-                        $('#entry-result, #entry-error').hide();
-                        clearEntryCompare();
-                        setMonthlyCodeLocked(false);
-                        manualConfirmHidden.entry = false;
-                        setManualBtnBusy('entry', false);
-                        syncManualConfirmBtn('entry');
+                        resetEntryUi();
                     } else {
                         if (res.log_id) lastSeenEntryId = res.log_id;
                         showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url, {

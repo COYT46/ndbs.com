@@ -49,7 +49,7 @@
                             <input type="text" id="entry-code" class="form-control text-uppercase fw-bold" placeholder="A00001" maxlength="6">
                         </div>
                         <small id="entry-code-arm-hint" class="text-muted d-block mb-2" style="font-size: 13px;">
-                            Để trống nếu vé ngày. Nhập đúng mã vé tháng sẽ hiện xanh.
+                            Để trống nếu vé ngày.
                         </small>
                     </div>
                     <div>
@@ -303,7 +303,7 @@ $(document).ready(function() {
     function resetMonthlyLookupUi(kind, message) {
         if (kind === 'idle') {
             $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
-                .text(message || 'Để trống nếu vé ngày. Nhập đúng mã vé tháng sẽ hiện xanh.');
+                .text(message || 'Để trống nếu vé ngày.');
         } else if (kind === 'ok') {
             $('#entry-code-arm-hint').removeClass('text-muted text-danger').addClass('text-success')
                 .text(message || '');
@@ -398,6 +398,31 @@ $(document).ready(function() {
         $('#entry-code').closest('.input-group').toggleClass('opacity-75', !!locked);
     }
 
+    function keepEntryInputsReady() {
+        entryCooldown = false;
+        setMonthlyCodeLocked(false);
+        $('#entry-file, #btn-entry-recognize').prop('disabled', false);
+        $('#btn-entry-recognize').html(entryBtnHtml(false));
+    }
+
+    function showMonthlyMismatch(data) {
+        currentMonthlyLogId = data.pending_id || data.log_id || null;
+        keepEntryInputsReady();
+        $('#comp-in-reg-plate').text(data.registered_plate || '-');
+        $('#comp-in-plate').text(data.plate_number || '-');
+        const imageUrl = data.image_url || data.entry_image;
+        if (imageUrl) {
+            $('#comp-in-empty').hide();
+            $('#comp-in-img').attr('src', imageUrl).show();
+            $('#entry-placeholder').hide();
+            $('#entry-camera').attr('src', imageUrl).css('object-fit', 'contain').show();
+        }
+        $('#comp-in-status-badge').removeClass('bg-light text-primary').addClass('bg-danger text-white')
+            .text('BSX không khớp vé tháng');
+        $('#entry-validation-buttons').show();
+        $('#entry-result').hide();
+    }
+
     function resetMonthlyEntryFields() {
         monthlyLookupSeq++;
         lastLookupMonthly = '';
@@ -405,7 +430,7 @@ $(document).ready(function() {
         setMonthlyCodeLocked(false);
         $('#entry-code').val('');
         $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
-            .text('Để trống nếu vé ngày. Nhập đúng mã vé tháng sẽ hiện xanh.');
+            .text('Để trống nếu vé ngày.');
         $('#comp-in-reg-plate').text('-');
     }
 
@@ -653,74 +678,70 @@ $(document).ready(function() {
     }
 
     function submitEntry(imageSource) {
-        const fd = new FormData();
-        fd.append('image', imageSource);
-        const monthly = ($('#entry-code').val() || '').trim().toUpperCase();
-        if (monthly) fd.append('monthly_code', monthly);
         const btn = $('#btn-entry-recognize');
         btn.prop('disabled', true).html(entryBtnHtml(true));
         $('#entry-result, #entry-error').hide();
+        $('#entry-validation-buttons').hide();
         hideManualConfirm('entry');
         if (entryTimerInterval) clearInterval(entryTimerInterval);
-        $.ajax({
-            url: API.entry,
-            type: 'POST',
-            data: fd,
-            processData: false,
-            contentType: false,
-            success: function(response) {
-                if (response.success) {
-                    if (response.monthly_pending) {
-                        currentMonthlyLogId = response.pending_id || response.log_id;
-                        entryCooldown = true;
+
+        function doSubmit() {
+            const fd = new FormData();
+            fd.append('image', imageSource);
+            const monthly = ($('#entry-code').val() || '').trim().toUpperCase();
+            if (monthly) fd.append('monthly_code', monthly);
+            $.ajax({
+                url: API.entry,
+                type: 'POST',
+                data: fd,
+                processData: false,
+                contentType: false,
+                success: function(response) {
+                    if (response.success) {
+                        if (response.monthly_pending) {
+                            showMonthlyMismatch(response);
+                        } else {
+                            showEntrySuccess(response.plate_number, response.code, response.image_url || null);
+                        }
+                    } else if (response.already_inside) {
+                        showAlreadyInsideAlert(response);
+                    } else {
+                        $('#entry-error-title').text('Lỗi nhận diện');
+                        $('#entry-error-msg').text(response.message || 'Có lỗi xảy ra!');
+                        $('#entry-error').fadeIn();
+                        if (response.ocr_failed) {
+                            showManualConfirm('entry');
+                        }
+                    }
+                },
+                error: function(xhr) {
+                    const body = xhr.responseJSON || {};
+                    if (body.already_inside) {
+                        showAlreadyInsideAlert(body);
+                        return;
+                    }
+                    let msg = 'Lỗi kết nối máy chủ (HTTP ' + xhr.status + ').';
+                    if (body.message) msg += '\nChi tiết: ' + body.message;
+                    showNotificationModal(false, 'Lỗi Kết Nối Máy Chủ', msg);
+                },
+                complete: function() {
+                    if (entryCooldown) {
                         $('#entry-file, #btn-entry-recognize').prop('disabled', true);
                         $('#btn-entry-recognize').html(entryBtnHtml(false));
-                        $('#comp-in-reg-plate').text(response.registered_plate || '-');
-                        $('#comp-in-plate').text(response.plate_number || '-');
-                        if (response.image_url) {
-                            $('#comp-in-empty').hide();
-                            $('#comp-in-img').attr('src', response.image_url).show();
-                            $('#entry-placeholder').hide();
-                            $('#entry-camera').attr('src', response.image_url).css('object-fit', 'contain').show();
-                        }
-                        $('#comp-in-status-badge').removeClass('bg-light text-primary').addClass('bg-danger text-white')
-                            .text('BSX không khớp vé tháng');
-                        $('#entry-validation-buttons').show();
-                        $('#entry-result').hide();
-                        setMonthlyCodeLocked(true);
                     } else {
-                        showEntrySuccess(response.plate_number, response.code, response.image_url || null);
-                    }
-                } else if (response.already_inside) {
-                    showAlreadyInsideAlert(response);
-                } else {
-                    $('#entry-error-title').text('Lỗi nhận diện');
-                    $('#entry-error-msg').text(response.message || 'Có lỗi xảy ra!');
-                    $('#entry-error').fadeIn();
-                    if (response.ocr_failed) {
-                        showManualConfirm('entry');
+                        $('#entry-file, #btn-entry-recognize').prop('disabled', false);
+                        $('#btn-entry-recognize').html(entryBtnHtml(false));
                     }
                 }
-            },
-            error: function(xhr) {
-                const body = xhr.responseJSON || {};
-                if (body.already_inside) {
-                    showAlreadyInsideAlert(body);
-                    return;
-                }
-                let msg = 'Lỗi kết nối máy chủ (HTTP ' + xhr.status + ').';
-                if (body.message) msg += '\nChi tiết: ' + body.message;
-                showNotificationModal(false, 'Lỗi Kết Nối Máy Chủ', msg);
-            },
-            complete: function() {
-                if (entryCooldown) {
-                    $('#entry-file, #btn-entry-recognize').prop('disabled', true);
-                    $('#btn-entry-recognize').html(entryBtnHtml(false));
-                } else {
-                    $('#btn-entry-recognize').prop('disabled', false).html(entryBtnHtml(false));
-                }
-            }
-        });
+            });
+        }
+
+        if (currentMonthlyLogId) {
+            currentMonthlyLogId = null;
+            $.post(API.dismissPendingMonthly).always(doSubmit);
+            return;
+        }
+        doSubmit();
     }
 
     function submitExit(imageSource, codeVal) {
@@ -877,19 +898,7 @@ $(document).ready(function() {
                 hideManualConfirm(side);
                 if (side === 'entry') {
                     if (res.monthly_pending) {
-                        currentMonthlyLogId = res.pending_id || res.log_id;
-                        entryCooldown = true;
-                        $('#entry-file, #btn-entry-recognize').prop('disabled', true);
-                        $('#comp-in-reg-plate').text(res.registered_plate || '-');
-                        $('#comp-in-plate').text(res.plate_number || '-');
-                        if (res.image_url) {
-                            $('#comp-in-empty').hide();
-                            $('#comp-in-img').attr('src', res.image_url).show();
-                        }
-                        $('#comp-in-status-badge').removeClass('bg-light text-primary').addClass('bg-danger text-white')
-                            .text('BSX không khớp vé tháng');
-                        $('#entry-validation-buttons').show();
-                        setMonthlyCodeLocked(true);
+                        showMonthlyMismatch(res);
                     } else {
                         showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url || null);
                     }
@@ -981,18 +990,7 @@ $(document).ready(function() {
                     currentMonthlyLogId = null;
                     if (res.rejected) {
                         showNotificationModal(false, 'Không cho xe vào', res.message || 'Đã từ chối. Không lưu vào database.');
-                        entryCooldown = false;
-                        $('#entry-file').val('').prop('disabled', false);
-                        $('#btn-entry-recognize').prop('disabled', false).html(entryBtnHtml(false));
-                        $('#entry-camera').hide().attr('src', '');
-                        $('#entry-placeholder').show();
-                        $('#entry-result, #entry-error').hide();
-                        hideManualConfirm('entry');
-                        $('#comp-in-img').hide().attr('src', '');
-                        $('#comp-in-empty').show();
-                        $('#comp-in-plate').text('-');
-                        $('#comp-in-status-badge').removeClass('bg-danger text-white').addClass('bg-light text-primary').text('Chờ nhận diện xe vào');
-                        setMonthlyCodeLocked(false);
+                        resetEntryUi();
                     } else {
                         showEntrySuccess(res.plate_number || UNRECOGNIZED_PLATE, res.code, res.image_url);
                     }

@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\MonthlyTicket;
 use App\Models\Setting;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
 
 class MonthlyTicketController extends Controller
 {
@@ -108,14 +107,10 @@ class MonthlyTicketController extends Controller
             return redirect()->back()->withErrors(['error' => 'Vé tháng đã hết hạn, hãy dùng Gia hạn.']);
         }
 
-        $allowed = $ticket->allowedDurations();
         $request->validate([
             'plate_number' => 'required|string|max:20',
-            'duration_months' => ['required', 'integer', Rule::in($allowed)],
         ], [
             'plate_number.required' => 'Vui lòng nhập biển số xe.',
-            'duration_months.required' => 'Vui lòng chọn thời hạn.',
-            'duration_months.in' => 'Không thể chọn thời hạn này vì đã dùng quá số ngày tương ứng.',
         ]);
 
         $plate = $this->normalizePlate($request->plate_number);
@@ -126,11 +121,7 @@ class MonthlyTicketController extends Controller
                 ->with('_edit_ticket_id', $ticket->id);
         }
 
-        $months = (int) $request->duration_months;
         $ticket->plate_number = $plate;
-        $ticket->duration_months = $months;
-        $ticket->price = Setting::monthlyPricePerMonth() * $months;
-        $ticket->expires_on = MonthlyTicket::expiryDate($ticket->starts_on, $months)->toDateString();
         $ticket->save();
 
         return redirect()->back()->with('success', 'Cập nhật vé tháng thành công.');
