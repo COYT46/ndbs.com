@@ -102,9 +102,21 @@ class ApiController extends Controller
     {
         do {
             $code = chr(rand(65, 90)) . chr(rand(65, 90)) . rand(1000, 9999);
-        } while (VehicleLog::where('code', $code)->exists());
+        } while (
+            VehicleLog::where('code', $code)->exists()
+            || MonthlyTicket::where('code', $code)->exists()
+        );
 
         return $code;
+    }
+
+    private function assignEntryCode(?MonthlyTicket $ticket): string
+    {
+        if ($ticket) {
+            return strtoupper(trim((string) $ticket->code));
+        }
+
+        return $this->generateUniqueVehicleCode();
     }
 
     private function armedMonthlyCodePath()
@@ -901,9 +913,9 @@ class ApiController extends Controller
                 ], $alert));
             }
 
-            $code = $this->generateUniqueVehicleCode();
             $monthlyTicket = $this->resolveMonthlyTicket($request);
             $isMonthly = (bool) $monthlyTicket;
+            $code = $this->assignEntryCode($monthlyTicket);
             $monthlyMatch = $isMonthly ? $this->platesMatch($monthlyTicket->plate_number, $plate) : null;
 
             $log = VehicleLog::create([
@@ -926,15 +938,13 @@ class ApiController extends Controller
 
             $this->writeManualOcrPause(10);
 
-            $displayCode = $isMonthly ? $monthlyTicket->code : $code;
             $pendingMonthly = $isMonthly && !$monthlyMatch;
 
             return response()->json([
                 'success' => true,
                 'log_id' => $log->id,
                 'plate_number' => $plate,
-                'code' => $displayCode,
-                'visit_code' => $code,
+                'code' => $code,
                 'ticket_type' => $isMonthly ? 'monthly' : 'daily',
                 'monthly_code' => $isMonthly ? $monthlyTicket->code : null,
                 'registered_plate' => $isMonthly ? $monthlyTicket->plate_number : null,
@@ -1106,9 +1116,9 @@ class ApiController extends Controller
         $this->releaseSessionLock();
 
         $plate = $this->unrecognizedPlateLabel();
-        $code = $this->generateUniqueVehicleCode();
         $monthlyTicket = $this->resolveMonthlyTicket($request);
         $isMonthly = (bool) $monthlyTicket;
+        $code = $this->assignEntryCode($monthlyTicket);
         $monthlyMatch = $isMonthly ? false : null;
 
         $log = VehicleLog::create([
@@ -1131,15 +1141,12 @@ class ApiController extends Controller
 
         $this->writeManualOcrPause(10);
 
-        $displayCode = $isMonthly ? $monthlyTicket->code : $code;
-
         return response()->json([
             'success' => true,
             'unrecognized' => true,
             'log_id' => $log->id,
             'plate_number' => $plate,
-            'code' => $displayCode,
-            'visit_code' => $code,
+            'code' => $code,
             'ticket_type' => $isMonthly ? 'monthly' : 'daily',
             'monthly_code' => $isMonthly ? $monthlyTicket->code : null,
             'registered_plate' => $isMonthly ? $monthlyTicket->plate_number : null,
@@ -2247,7 +2254,9 @@ class ApiController extends Controller
             ]);
         }
 
+        $dailyCode = $this->generateUniqueVehicleCode();
         $log->update([
+            'code' => $dailyCode,
             'ticket_type' => 'daily',
             'monthly_ticket_id' => null,
             'monthly_match' => false,
@@ -2258,10 +2267,10 @@ class ApiController extends Controller
         return response()->json([
             'success' => true,
             'ticket_type' => 'daily',
-            'code' => $log->code,
+            'code' => $dailyCode,
             'plate_number' => $log->plate_number,
             'image_url' => $log->entry_image ? asset($log->entry_image) : null,
-            'message' => 'Đã xác nhận không hợp lệ. Lượt này tính vé ngày (mã ' . $log->code . ').',
+            'message' => 'Đã xác nhận không hợp lệ. Lượt này tính vé ngày (mã ' . $dailyCode . ').',
         ]);
     }
 
