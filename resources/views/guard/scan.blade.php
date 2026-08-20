@@ -682,7 +682,7 @@ $(document).ready(function() {
     }
 
     function holdStatusText() {
-        if (holdReason === 'monthly_pending') {
+        if (holdReason === 'monthly_pending' || holdReason === 'exit_pending') {
             return 'Chờ máy tính xác nhận Hợp lệ / Không hợp lệ...';
         }
         return 'Xe vẫn trong bãi — chờ máy tính bấm Đồng ý...';
@@ -732,6 +732,10 @@ $(document).ready(function() {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();
         }).then(function(res) {
+            if (insideHold && res && Number(res.pause_ocr_s) > 0) {
+                const until = Date.now() + (Number(res.pause_ocr_s) * 1000);
+                if (until > ocrPausedUntil) ocrPausedUntil = until;
+            }
             if (insideHold && res && res.hold_scan === false) {
                 releaseInsideHold();
                 return;
@@ -756,6 +760,10 @@ $(document).ready(function() {
         }
         $('#scan-result').fadeOut();
         holdReason = '';
+        if (Date.now() < ocrPausedUntil) {
+            resumeAfterAttempt(0);
+            return;
+        }
         setStatus(IS_EXIT
             ? 'Chờ quẹt mã (nhập trên máy tính)...'
             : idleEntryWaiting());
@@ -831,18 +839,20 @@ $(document).ready(function() {
             return r.json();
         }).then(function(res) {
             if (!res || res.success === false) {
-                if (IS_EXIT) setStatus('Lỗi đọc mã — reload trang');
+                if (IS_EXIT && !busy && !insideHold && Date.now() >= ocrPausedUntil) {
+                    setStatus('Lỗi đọc mã — reload trang');
+                }
                 return;
             }
             if (IS_EXIT) {
-                if (!busy) {
+                if (!busy && !insideHold && Date.now() >= ocrPausedUntil) {
                     onArmedCode(res.armed_exit_code ? String(res.armed_exit_code).toUpperCase() : null);
                 }
             } else {
                 onArmedMonthlyCode(res.armed_monthly_code || null);
             }
         }).catch(function(err) {
-            if (IS_EXIT) {
+            if (IS_EXIT && !busy && !insideHold && Date.now() >= ocrPausedUntil) {
                 setStatus('Không nối máy tính: ' + (err && err.message ? err.message : 'lỗi mạng'));
             }
         }).finally(function() {
@@ -1058,9 +1068,17 @@ $(document).ready(function() {
             if (res && res.success) {
                 armedCode = null;
                 liveStarted = false;
+                if (!res.match || res.hold_scan) {
+                    showResult(true,
+                        '<strong>Chờ xác nhận đối chiếu</strong><br>Biển ra: <b>' + (res.exit_plate || plateHint) +
+                        '</b><br>' + (res.message || 'BSX không khớp — chờ máy tính xác nhận.')
+                    );
+                    enterScanHold(res.hold_reason || 'exit_pending');
+                    return;
+                }
                 showResult(true,
-                    '<strong>Đã gửi đối chiếu</strong><br>Biển ra: <b>' + (res.exit_plate || plateHint) +
-                    '</b><br>Máy tính: biển khớp sẽ tự cho ra'
+                    '<strong>Xe ra OK</strong><br>Biển ra: <b>' + (res.exit_plate || plateHint) +
+                    '</b><br>Mã code: <b class="text-primary">' + (res.code || code) + '</b>'
                 );
                 holdForFrontendCountdown(res.pause_ocr_s || FRONTEND_HOLD_S);
             } else {

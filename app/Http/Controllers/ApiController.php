@@ -156,6 +156,11 @@ class ApiController extends Controller
             @unlink($path);
             return null;
         }
+        $ticket = MonthlyTicket::findUsableByCode((string) $data['code']);
+        if (!$ticket) {
+            @unlink($path);
+            return null;
+        }
         return $data;
     }
 
@@ -257,7 +262,8 @@ class ApiController extends Controller
     private function findOpenLogByCode(string $code): ?VehicleLog
     {
         $code = strtoupper(trim($code));
-        $log = VehicleLog::where('code', $code)
+        $log = VehicleLog::with('monthlyTicket')
+            ->where('code', $code)
             ->where(function ($q) {
                 $q->where('status', 'in')->orWhere('is_valid', false);
             })
@@ -273,12 +279,44 @@ class ApiController extends Controller
         if (!$ticket) {
             return null;
         }
-        return VehicleLog::where('monthly_ticket_id', $ticket->id)
+        return VehicleLog::with('monthlyTicket')
+            ->where('monthly_ticket_id', $ticket->id)
             ->where(function ($q) {
                 $q->where('status', 'in')->orWhere('is_valid', false);
             })
             ->latest()
             ->first();
+    }
+
+    /**
+     * Xe vé tháng đã vào nhưng vé bị vô hiệu / hết hạn → không cho quét ra bằng mã đó.
+     */
+    private function monthlyExitBlockedReason(?VehicleLog $log): ?string
+    {
+        if (!$log) {
+            return null;
+        }
+        $isMonthly = (($log->ticket_type ?? '') === 'monthly') || (int) ($log->monthly_ticket_id ?? 0) > 0;
+        if (!$isMonthly) {
+            return null;
+        }
+
+        $ticket = $log->monthlyTicket;
+        if (!$ticket && (int) ($log->monthly_ticket_id ?? 0) > 0) {
+            $ticket = MonthlyTicket::find($log->monthly_ticket_id);
+        }
+        if (!$ticket) {
+            $ticket = MonthlyTicket::where('code', strtoupper((string) $log->code))->first();
+        }
+
+        if (!$ticket || $ticket->deleted || !$ticket->is_active) {
+            return 'Vé tháng đã vô hiệu hóa — không cho quét xe ra.';
+        }
+        if ($ticket->isExpired()) {
+            return 'Vé tháng đã hết hạn — không cho quét xe ra.';
+        }
+
+        return null;
     }
 
     private function feePayload(VehicleLog $log, ?array $calc = null): array
@@ -320,16 +358,18 @@ class ApiController extends Controller
             return [
                 'success' => true,
                 'found' => false,
+                'disabled' => true,
                 'code' => $code,
-                'message' => 'Vé tháng đã vô hiệu hóa — sẽ tính vé ngày.',
+                'message' => 'Vé tháng đã vô hiệu hóa.',
             ];
         }
         if ($ticket->isExpired()) {
             return [
                 'success' => true,
                 'found' => false,
+                'expired' => true,
                 'code' => $code,
-                'message' => 'Vé tháng đã hết hạn — sẽ tính vé ngày.',
+                'message' => 'Vé tháng đã hết hạn.',
             ];
         }
 
@@ -1121,6 +1161,17 @@ class ApiController extends Controller
                 ]);
             }
 
+            $blocked = $this->monthlyExitBlockedReason($log);
+            if ($blocked) {
+                $this->clearArmedExitCodeStorage();
+                return response()->json([
+                    'success' => false,
+                    'message' => $blocked,
+                    'monthly_disabled' => true,
+                    'retryable' => true,
+                ]);
+            }
+
             $file = $request->file('image');
             $uploadDir = public_path('uploads/vehicles');
             if (!file_exists($uploadDir)) {
@@ -1166,8 +1217,9 @@ class ApiController extends Controller
                 $log->save();
                 $this->clearLocalArmedExitCodeOnly();
                 $this->releaseGlobalArmedCode(strtoupper((string) $log->code));
+                $this->writeManualOcrPause(10);
             } else {
-                // Biển không khớp — chờ bảo vệ bấm Hợp lệ / Không hợp lệ
+                // Biển không khớp — chờ bảo vệ bấm Hợp lệ / Không hợp lệ (ĐT không quét)
                 $log->update([
                     'status' => 'in',
                     'exit_time' => null,
@@ -1178,9 +1230,8 @@ class ApiController extends Controller
                 ]);
                 $this->clearLocalArmedExitCodeOnly();
                 $this->touchGlobalArmedCode(strtoupper((string) $log->code), $log->id);
+                $this->writeScanHold('exit_pending');
             }
-
-            $this->writeManualOcrPause(10);
 
             $log->load('monthlyTicket');
             $hours = 0;
@@ -1199,7 +1250,9 @@ class ApiController extends Controller
                 'entry_plate' => $log->plate_number,
                 'exit_image' => asset($relativePath),
                 'exit_plate' => $exitPlate,
-                'pause_ocr_s' => 10,
+                'pause_ocr_s' => $isMatch ? 10 : 0,
+                'hold_scan' => !$isMatch,
+                'hold_reason' => $isMatch ? null : 'exit_pending',
                 'already_out' => $isMatch,
                 'message' => $isMatch
                     ? ('Biển số khớp: ' . $exitPlate)
@@ -1322,6 +1375,17 @@ class ApiController extends Controller
             ]);
         }
 
+        $blocked = $this->monthlyExitBlockedReason($log);
+        if ($blocked) {
+            $this->clearArmedExitCodeStorage();
+            return response()->json([
+                'success' => false,
+                'message' => $blocked,
+                'monthly_disabled' => true,
+                'retryable' => true,
+            ]);
+        }
+
         $relativePath = $this->storeManualVehicleImage('exit', $request);
         if (!$relativePath) {
             return response()->json([
@@ -1345,7 +1409,7 @@ class ApiController extends Controller
 
         $this->clearLocalArmedExitCodeOnly();
         $this->touchGlobalArmedCode(strtoupper((string) $log->code), $log->id);
-        $this->writeManualOcrPause(10);
+        $this->writeScanHold('exit_pending');
 
         return response()->json([
             'success' => true,
@@ -1358,7 +1422,9 @@ class ApiController extends Controller
             'exit_image' => asset($relativePath),
             'exit_plate' => $exitPlate,
             'message' => 'Đã chụp xe ra (không thể nhận diện biển). Vui lòng xác nhận Hợp lệ / Không hợp lệ.',
-            'pause_ocr_s' => 10,
+            'pause_ocr_s' => 0,
+            'hold_scan' => true,
+            'hold_reason' => 'exit_pending',
         ]);
     }
 
@@ -1388,8 +1454,8 @@ class ApiController extends Controller
      */
     public function ackScanHold()
     {
-        // F5 / Đồng ý chỉ nhả hold "xe trong bãi". Đối chiếu vé tháng chỉ nhả khi Hợp lệ / Không hợp lệ.
-        if ($this->scanHoldReason() !== 'monthly_pending') {
+        // F5 / Đồng ý chỉ nhả hold "xe trong bãi". Đối chiếu (vé tháng / xe ra) chỉ nhả khi Hợp lệ / Không hợp lệ.
+        if (!in_array($this->scanHoldReason(), ['monthly_pending', 'exit_pending'], true)) {
             $this->clearScanHold();
         }
         $this->clearEntryAlert();
@@ -1399,6 +1465,7 @@ class ApiController extends Controller
             'success' => true,
             'hold_scan' => $this->isScanHoldActive(),
             'hold_reason' => $this->scanHoldReason(),
+            'pause_ocr_s' => $this->readManualOcrPauseRemaining(),
         ]);
     }
 
@@ -1410,6 +1477,7 @@ class ApiController extends Controller
             'success' => true,
             'hold_scan' => $this->isScanHoldActive(),
             'hold_reason' => $this->scanHoldReason(),
+            'pause_ocr_s' => $this->readManualOcrPauseRemaining(),
         ], 200, [
             'Cache-Control' => 'no-store, no-cache, must-revalidate',
         ]);
@@ -1444,10 +1512,15 @@ class ApiController extends Controller
         if ($isValid) {
             // Đã cho ra rồi (bấm F5 lúc đang đếm) → không đổi lại
             if ((string) $log->status === 'out' && $log->is_valid) {
+                $this->writeManualOcrPause(10);
+                if ($this->scanHoldReason() === 'exit_pending') {
+                    $this->clearScanHold();
+                }
                 $log->load('monthlyTicket');
                 return response()->json(array_merge([
                     'success' => true,
-                    'message' => 'Đã xác nhận Hợp lệ! Xe đã chuyển sang danh sách xe vào đã ra.'
+                    'message' => 'Đã xác nhận Hợp lệ! Xe đã chuyển sang danh sách xe vào đã ra.',
+                    'pause_ocr_s' => 10,
                 ], $this->feePayload($log, [
                     'fee' => (int) ($log->fee ?? 0),
                     'hours' => ($log->ticket_type === 'monthly') ? 0 : ParkingFee::billedHours($log->entry_time, $log->exit_time ?: now()),
@@ -1466,11 +1539,16 @@ class ApiController extends Controller
 
             $this->clearLocalArmedExitCodeOnly();
             $this->releaseGlobalArmedCode(strtoupper((string) $log->code));
+            $this->writeManualOcrPause(10);
+            if ($this->scanHoldReason() === 'exit_pending') {
+                $this->clearScanHold();
+            }
 
             $log->load('monthlyTicket');
             return response()->json(array_merge([
                 'success' => true,
-                'message' => 'Đã xác nhận Hợp lệ! Xe đã chuyển sang danh sách xe vào đã ra.'
+                'message' => 'Đã xác nhận Hợp lệ! Xe đã chuyển sang danh sách xe vào đã ra.',
+                'pause_ocr_s' => 10,
             ], $this->feePayload($log, [
                 'fee' => (int) ($log->fee ?? 0),
                 'hours' => ($log->ticket_type === 'monthly') ? 0 : ParkingFee::billedHours($log->entry_time, $log->exit_time),
@@ -1489,10 +1567,14 @@ class ApiController extends Controller
         // Nhả khóa — tài khoản khác có thể kích hoạt lại (xanh)
         $this->clearLocalArmedExitCodeOnly();
         $this->releaseGlobalArmedCode(strtoupper((string) $log->code));
+        if ($this->scanHoldReason() === 'exit_pending') {
+            $this->clearScanHold();
+        }
 
         return response()->json([
             'success' => true,
-            'message' => 'Đã xác nhận Không hợp lệ! Có thể nhập lại mã để quét xe ra lại.'
+            'message' => 'Đã xác nhận Không hợp lệ! Có thể nhập lại mã để quét xe ra lại.',
+            'pause_ocr_s' => 0,
         ]);
     }
 
@@ -1546,6 +1628,9 @@ class ApiController extends Controller
         }
 
         $this->clearArmedExitCodeStorage();
+        if ($this->scanHoldReason() === 'exit_pending') {
+            $this->clearScanHold();
+        }
 
         return response()->json([
             'success' => true,
@@ -2242,7 +2327,7 @@ class ApiController extends Controller
     {
         $current = null;
         try {
-            $current = $this->readArmedExitCode();
+            $current = $this->readArmedExitCodeRaw();
         } catch (\Throwable $e) {
             $current = null;
         }
@@ -2260,7 +2345,39 @@ class ApiController extends Controller
         $this->releaseGlobalArmedCode($current);
     }
 
+    private function dropArmedExitIfMonthlyBlocked(?string $code): bool
+    {
+        $code = strtoupper(trim((string) $code));
+        if ($code === '') {
+            return false;
+        }
+        if ($this->monthlyExitBlockedReason($this->findOpenLogByCode($code)) === null) {
+            return false;
+        }
+
+        $path = $this->armedExitCodePath();
+        if (is_file($path)) {
+            @unlink($path);
+        }
+        try {
+            \Illuminate\Support\Facades\Cache::forget($this->armedExitCodeCacheKey());
+        } catch (\Throwable $e) {
+            // ignore
+        }
+        $this->releaseGlobalArmedCode($code);
+        return true;
+    }
+
     private function readArmedExitCode()
+    {
+        $code = $this->readArmedExitCodeRaw();
+        if ($code && $this->dropArmedExitIfMonthlyBlocked($code)) {
+            return null;
+        }
+        return $code;
+    }
+
+    private function readArmedExitCodeRaw()
     {
         // Ưu tiên cache (nhanh, ít race), fallback file
         try {
@@ -2467,6 +2584,17 @@ class ApiController extends Controller
                 'message' => 'Mã không tồn tại.',
                 'retryable' => true,
             ], 404);
+        }
+
+        $blocked = $this->monthlyExitBlockedReason($log);
+        if ($blocked) {
+            $this->clearArmedExitCodeStorage();
+            return response()->json([
+                'success' => false,
+                'message' => $blocked,
+                'monthly_disabled' => true,
+                'retryable' => true,
+            ], 422);
         }
 
         // Đang đối chiếu ở tài khoản khác → giữ báo đỏ conflict (chưa Hợp lệ / Không hợp lệ / F5)

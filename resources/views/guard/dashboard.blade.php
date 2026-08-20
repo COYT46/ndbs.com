@@ -667,7 +667,7 @@ $(document).ready(function() {
         }
     }
 
-    function armMonthlyIfReady() {
+    function armMonthlyIfReady(force) {
         if ($('#entry-code').prop('disabled')) return;
         const code = ($('#entry-code').val() || '').trim().toUpperCase();
         if (!code) {
@@ -686,7 +686,7 @@ $(document).ready(function() {
             $.post(API.clearMonthly);
             return;
         }
-        if (code === lastArmedMonthly || code === lastMonthlyFailed) return;
+        if (!force && (code === lastArmedMonthly || code === lastMonthlyFailed)) return;
         const seq = ++monthlyLookupSeq;
         $.post(API.armMonthly, { code: code })
             .done(function(res) {
@@ -793,6 +793,12 @@ $(document).ready(function() {
                         .text('Đã kích hoạt — mã ' + code + (res.plate_number ? (' (' + res.plate_number + ')') : ''));
                 } else if (res && res.conflict) {
                     markArmConflict((res && res.message) || 'Mã đang được tài khoản khác sử dụng — không nhận mã.');
+                } else if (res && res.monthly_disabled) {
+                    lastArmedCode = '';
+                    lastArmFailedCode = '';
+                    lastArmConflictCode = '';
+                    $('#exit-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
+                        .text(res.message || 'Vé tháng đã vô hiệu hóa — không cho quét xe ra.');
                 } else {
                     markArmFailed((res && res.message) || 'Không kích hoạt được mã này');
                 }
@@ -801,6 +807,14 @@ $(document).ready(function() {
                 const body = (xhr && xhr.responseJSON) || {};
                 if (body.conflict || xhr.status === 409) {
                     markArmConflict(body.message || 'Mã đang được tài khoản khác sử dụng — không nhận mã.');
+                    return;
+                }
+                if (body.monthly_disabled || xhr.status === 422) {
+                    lastArmedCode = '';
+                    lastArmFailedCode = '';
+                    lastArmConflictCode = '';
+                    $('#exit-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
+                        .text(body.message || 'Vé tháng đã vô hiệu hóa — không cho quét xe ra.');
                     return;
                 }
                 if (xhr.status === 404) {
@@ -1180,6 +1194,7 @@ $(document).ready(function() {
             showExitFee(data);
             $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
                 .text('Biển khớp — tự động cho ra sau ' + seconds + 's');
+            $.post(API.scanCooldown, { seconds: 10 });
             if (!data.already_out) {
                 autoApproveExit(data.log_id);
             }
@@ -1337,6 +1352,29 @@ $(document).ready(function() {
                             resetExitAndComparison();
                         }
                         lastSeenPendingId = null;
+                    }
+                }
+
+                const monthlyNow = ($('#entry-code').val() || '').trim().toUpperCase();
+                if (monthlyNow.length === 6 && !$('#entry-code').prop('disabled')) {
+                    const serverMonthly = res.armed_monthly_code
+                        ? String(res.armed_monthly_code).toUpperCase()
+                        : '';
+                    if (serverMonthly === monthlyNow) {
+                        if (lastArmedMonthly !== monthlyNow) {
+                            lastArmedMonthly = monthlyNow;
+                            lastMonthlyFailed = '';
+                            resetMonthlyLookupUi('ok', 'Vé tháng ' + monthlyNow
+                                + (res.armed_monthly_plate ? (' — BSX ' + res.armed_monthly_plate) : ''));
+                            if (res.armed_monthly_plate) {
+                                $('#comp-in-reg-plate').text(res.armed_monthly_plate);
+                            }
+                        }
+                    } else if (lastArmedMonthly === monthlyNow || lastMonthlyFailed === monthlyNow
+                        || $('#entry-code-arm-hint').hasClass('text-success')) {
+                        lastArmedMonthly = '';
+                        lastMonthlyFailed = '';
+                        armMonthlyIfReady(true);
                     }
                 }
 
@@ -1626,6 +1664,7 @@ $(document).ready(function() {
                     $('#exit-alert-icon').text('check_circle');
                     $('#exit-message').html('Đã cho phép xe ra!');
                     showExitFee(res);
+                    $.post(API.scanCooldown, { seconds: 10 });
                     let seconds = 10;
                     $('#exit-auto-timer').text(seconds);
                     $('#exit-auto-timer-wrap').removeClass('d-none');

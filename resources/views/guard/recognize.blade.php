@@ -280,6 +280,7 @@ $(document).ready(function() {
     let entryCooldown = false;
     let exitLocked = false;
     let lastLookupMonthly = '';
+    let lastLookupFailed = '';
     let monthlyLookupSeq = 0;
     let pendingValidationKind = 'exit';
 
@@ -317,22 +318,24 @@ $(document).ready(function() {
         }
     }
 
-    function lookupMonthlyIfReady() {
+    function lookupMonthlyIfReady(force) {
         if ($('#entry-code').prop('disabled')) return;
         const code = ($('#entry-code').val() || '').trim().toUpperCase();
         if (!code) {
             monthlyLookupSeq++;
             lastLookupMonthly = '';
+            lastLookupFailed = '';
             resetMonthlyLookupUi('idle');
             return;
         }
         if (code.length !== 6) {
             monthlyLookupSeq++;
             lastLookupMonthly = '';
+            lastLookupFailed = '';
             resetMonthlyLookupUi('invalid', 'Mã không tồn tại');
             return;
         }
-        if (code === lastLookupMonthly) return;
+        if (!force && (code === lastLookupMonthly || code === lastLookupFailed)) return;
         const seq = ++monthlyLookupSeq;
         $.post(API.lookupMonthly, { code: code }).done(function(res) {
             if (seq !== monthlyLookupSeq) return;
@@ -340,10 +343,12 @@ $(document).ready(function() {
             if (current !== code) return;
             if (res && res.found) {
                 lastLookupMonthly = code;
+                lastLookupFailed = '';
                 resetMonthlyLookupUi('ok', 'Vé tháng ' + res.code + ' — BSX ' + (res.plate_number || ''));
                 $('#comp-in-reg-plate').text(res.plate_number || '-');
             } else {
-                lastLookupMonthly = code;
+                lastLookupMonthly = '';
+                lastLookupFailed = code;
                 resetMonthlyLookupUi('invalid', (res && res.message) || 'Mã không tồn tại');
             }
         });
@@ -396,6 +401,7 @@ $(document).ready(function() {
     function resetMonthlyEntryFields() {
         monthlyLookupSeq++;
         lastLookupMonthly = '';
+        lastLookupFailed = '';
         setMonthlyCodeLocked(false);
         $('#entry-code').val('');
         $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
@@ -1041,6 +1047,12 @@ $(document).ready(function() {
         this.value = (this.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
         lookupMonthlyIfReady();
     });
+    setInterval(function() {
+        const code = ($('#entry-code').val() || '').trim().toUpperCase();
+        if (code.length === 6 && !$('#entry-code').prop('disabled')) {
+            lookupMonthlyIfReady(true);
+        }
+    }, 2000);
 });
 </script>
 @endpush
