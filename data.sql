@@ -183,8 +183,8 @@ CREATE TABLE IF NOT EXISTS `users` (
 
 -- Đang kết xuất đổ dữ liệu cho bảng ndbs.users: ~2 rows (xấp xỉ)
 INSERT INTO `users` (`id`, `fullname`, `email`, `email_verified_at`, `password`, `remember_token`, `created_at`, `updated_at`, `role`, `is_active`, `deleted`) VALUES
-	(1, 'Admin Manager', 'admin@admin.com', NULL, '$2y$12$FyNxWcYwf/vkTgV0KiI4ie7fBeHf5dHYaynUolGF9ktkDN6OnJG1C', NULL, '2026-07-02 18:51:05', '2026-07-02 18:51:05', 'manager', 1, 0),
-	(2, 'Trung', 'trung@baove.com', NULL, '$2y$12$FyNxWcYwf/vkTgV0KiI4ie7fBeHf5dHYaynUolGF9ktkDN6OnJG1C', NULL, '2026-07-02 18:51:05', '2026-07-02 20:12:53', 'guard', 1, 0);
+	(1, 'Quản lý', 'admin@admin.com', NULL, '$2y$12$FyNxWcYwf/vkTgV0KiI4ie7fBeHf5dHYaynUolGF9ktkDN6OnJG1C', NULL, '2026-07-02 18:51:05', '2026-07-02 18:51:05', 'manager', 1, 0),
+	(2, 'Bảo vệ', 'baove@baove.com', NULL, '$2y$12$FyNxWcYwf/vkTgV0KiI4ie7fBeHf5dHYaynUolGF9ktkDN6OnJG1C', NULL, '2026-07-02 18:51:05', '2026-07-02 20:12:53', 'guard', 1, 0);
 
 -- Đang kết xuất đổ cấu trúc cho bảng ndbs.vehicle_logs
 DROP TABLE IF EXISTS `vehicle_logs`;
