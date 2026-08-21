@@ -29,7 +29,6 @@ class MonthlyTicketController extends Controller
         }
 
         $q = MonthlyTicket::notDeleted()
-            ->where('is_active', true)
             ->whereDate('expires_on', '>=', now()->toDateString());
         if ($ignoreId) {
             $q->where('id', '!=', $ignoreId);
@@ -39,6 +38,11 @@ class MonthlyTicketController extends Controller
             $other = preg_replace('/[^A-Z0-9]/i', '', (string) $ticket->plate_number);
             return strcasecmp($other, $clean) === 0;
         });
+    }
+
+    private function plateTakenMessage(): string
+    {
+        return 'Biển số này đã có vé tháng còn hạn hoặc đang bị vô hiệu hóa.';
     }
 
     public function index()
@@ -76,7 +80,7 @@ class MonthlyTicketController extends Controller
         if ($this->plateTaken($plate)) {
             return redirect()->back()
                 ->withInput()
-                ->withErrors(['plate_number' => 'Biển số này đã có vé tháng còn hạn.']);
+                ->withErrors(['plate_number' => $this->plateTakenMessage()]);
         }
 
         $months = (int) $request->duration_months;
@@ -117,7 +121,7 @@ class MonthlyTicketController extends Controller
         if ($this->plateTaken($plate, $ticket->id)) {
             return redirect()->back()
                 ->withInput()
-                ->withErrors(['plate_number' => 'Biển số này đã có vé tháng còn hạn.'])
+                ->withErrors(['plate_number' => $this->plateTakenMessage()])
                 ->with('_edit_ticket_id', $ticket->id);
         }
 
@@ -134,6 +138,9 @@ class MonthlyTicketController extends Controller
         $ticket = MonthlyTicket::notDeleted()->findOrFail($id);
         if ($ticket->isExpired()) {
             return redirect()->back()->withErrors(['error' => 'Không thể đổi trạng thái vé đã hết hạn.']);
+        }
+        if (!$ticket->is_active && $this->plateTaken($ticket->plate_number, $ticket->id)) {
+            return redirect()->back()->withErrors(['error' => $this->plateTakenMessage()]);
         }
         $ticket->is_active = !$ticket->is_active;
         $ticket->save();
@@ -173,7 +180,7 @@ class MonthlyTicketController extends Controller
         if ($this->plateTaken($plate, $ticket->id)) {
             return redirect()->back()
                 ->withInput()
-                ->withErrors(['plate_number' => 'Biển số này đã có vé tháng còn hạn.'])
+                ->withErrors(['plate_number' => $this->plateTakenMessage()])
                 ->with('_renew_ticket_id', $ticket->id);
         }
 

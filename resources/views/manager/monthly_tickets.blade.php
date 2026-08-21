@@ -56,7 +56,7 @@
                                 <th class="text-center" style="width: 30px;">STT</th>
                                 <th>Mã code</th>
                                 <th>BSX</th>
-                                <th>Ngày tạo</th>
+                                <th>Trạng thái</th>
                                 <th class="text-center" style="width: 180px;">Thao tác</th>
                             </tr>
                         </thead>
@@ -66,7 +66,13 @@
                                     <td class="text-center">{{ $k + 1 }}</td>
                                     <td><span class="badge bg-primary fs-6">{{ $ticket->code }}</span></td>
                                     <td><strong class="text-danger fs-6">{{ $ticket->plate_number }}</strong></td>
-                                    <td>{{ $ticket->created_at->format('d/m/Y') }}</td>
+                                    <td>
+                                        @if (!$ticket->is_active)
+                                            <span class="badge bg-danger">Đã vô hiệu hóa</span>
+                                        @else
+                                            <span class="badge bg-success">Còn hạn</span>
+                                        @endif
+                                    </td>
                                     <td class="text-center">
                                         <div class="d-flex gap-1 flex-wrap justify-content-center">
                                             <button type="button" class="btn btn-sm btn-info text-white d-inline-flex align-items-center"
@@ -209,7 +215,7 @@
                                 <th class="text-center" style="width: 30px;">STT</th>
                                 <th>Mã code</th>
                                 <th>BSX</th>
-                                <th>Ngày tạo</th>
+                                <th>Trạng thái</th>
                                 <th class="text-center" style="width: 140px;">Thao tác</th>
                             </tr>
                         </thead>
@@ -219,7 +225,7 @@
                                     <td class="text-center">{{ $k + 1 }}</td>
                                     <td><span class="badge bg-secondary fs-6">{{ $ticket->code }}</span></td>
                                     <td><strong class="text-danger fs-6">{{ $ticket->plate_number }}</strong></td>
-                                    <td>{{ $ticket->created_at->format('d/m/Y') }}</td>
+                                    <td><span class="badge bg-danger">Hết hạn</span></td>
                                     <td class="text-center">
                                         <div class="d-flex gap-1 justify-content-center">
                                             <button type="button" class="btn btn-sm btn-info text-white d-inline-flex align-items-center"
