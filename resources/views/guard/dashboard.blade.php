@@ -52,7 +52,7 @@
 
                     <div class="input-group mb-2 shadow-sm">
                         <span class="input-group-text bg-light text-primary fw-bold small"><i class="material-icons-outlined me-1 fs-6">qr_code</i> Mã vé tháng</span>
-                        <input type="text" id="entry-code" class="form-control text-uppercase fw-bold" placeholder="A00001" maxlength="6">
+                        <input type="text" id="entry-code" class="form-control text-uppercase fw-bold" placeholder="Nhập mã" maxlength="6">
                     </div>
                     <small id="entry-code-arm-hint" class="text-muted d-block mb-2" style="font-size: 13px;">
                         Để trống nếu vé ngày.
