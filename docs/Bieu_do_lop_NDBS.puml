@@ -1,0 +1,162 @@
+@startuml
+title Biểu đồ lớp hệ thống NDBS
+
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+skinparam linetype ortho
+skinparam wrapWidth 200
+skinparam packageStyle rectangle
+
+package "Hạ tầng Laravel" {
+  class Cache {
+    - key : string
+    - value : string
+    - expiration : int
+  }
+
+  class CacheLock {
+    - key : string
+    - owner : string
+    - expiration : int
+  }
+
+  class FailedJob {
+    - id : bigint
+    - uuid : string
+    - connection : string
+    - queue : string
+    - payload : string
+    - exception : string
+    - failed_at : datetime
+  }
+
+  class Migration {
+    - id : int
+    - migration : string
+    - batch : int
+  }
+}
+
+package "Xác thực / phiên" {
+  class Session {
+    - id : string
+    - ip_address : string
+    - user_agent : string
+    - payload : string
+    - last_activity : int
+  }
+
+  class PersonalAccessToken {
+    - id : bigint
+    - tokenable_type : string
+    - tokenable_id : bigint
+    - name : string
+    - token : string
+    - abilities : string
+    - last_used_at : datetime
+    - expires_at : datetime
+    - created_at : datetime
+    - updated_at : datetime
+  }
+
+  class PasswordResetToken {
+    - email : string
+    - token : string
+    - created_at : datetime
+  }
+}
+
+package "Nghiệp vụ" {
+  class User {
+    - id : bigint
+    - fullname : string
+    - email : string
+    - password : string
+    - role : string
+    - is_active : boolean
+    - deleted : boolean
+    - email_verified_at : datetime
+    - remember_token : string
+    - created_at : datetime
+    - updated_at : datetime
+  }
+
+  class VehicleLog {
+    - id : bigint
+    - plate_number : string
+    - code : string
+    - ticket_type : string
+    - status : string
+    - entry_time : datetime
+    - exit_time : datetime
+    - entry_image : string
+    - exit_image : string
+    - exit_plate_number : string
+    - is_valid : boolean
+    - fee : int
+    - hourly_rate : int
+    - monthly_match : boolean
+    - monthly_confirmed : boolean
+    - created_at : datetime
+    - updated_at : datetime
+    --
+    + isMonthly() : boolean
+    + isPendingMonthlyEntry() : boolean
+  }
+
+  class MonthlyTicket {
+    - id : bigint
+    - code : string
+    - plate_number : string
+    - duration_months : int
+    - price : int
+    - starts_on : date
+    - expires_on : date
+    - is_active : boolean
+    - deleted : boolean
+    - created_at : datetime
+    - updated_at : datetime
+    --
+    + isExpired() : boolean
+    + isUsable() : boolean
+    + daysUsed() : int
+    + allowedDurations() : int[]
+    + {static} nextCode() : string
+    + {static} expiryDate() : date
+    + {static} findUsableByCode() : MonthlyTicket
+  }
+
+  class Setting {
+    - id : bigint
+    - key : string
+    - value : string
+    - created_at : datetime
+    - updated_at : datetime
+    --
+    + {static} getValue() : string
+    + {static} setValue() : void
+    + {static} dailyPricePerHour() : int
+    + {static} monthlyPricePerMonth() : int
+  }
+
+  class ParkingFee <<service>> {
+    + {static} billedHours() : int
+    + {static} calcDailyFee() : map
+    + {static} applyOnCheckout() : map
+    + {static} formatVnd() : string
+  }
+}
+
+User "1" -- "*" Session
+User "1" -- "*" PersonalAccessToken
+User "1" -- "0..1" PasswordResetToken
+
+User "1" -- "*" VehicleLog : xử lý vào
+User "0..1" -- "*" VehicleLog : xử lý ra
+
+MonthlyTicket "0..1" -- "*" VehicleLog : gắn vé
+
+ParkingFee ..> VehicleLog : tính phí
+ParkingFee ..> Setting : lấy đơn giá
+
+@enduml
