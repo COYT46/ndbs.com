@@ -293,6 +293,7 @@ $(document).ready(function() {
     let lastArmFailedCode = '';
     let lastArmConflictCode = '';
     let armInFlight = false;
+    let exitArmSeq = 0;
     let conflictRetryTimer = null;
     const IDLE_EXIT_HINT = 'Nhập mã 6 ký tự và chọn ảnh';
 
@@ -314,6 +315,16 @@ $(document).ready(function() {
     }
     function setCodeStatusHintVisible(side, visible) {
         $('#' + side + '-code-arm-hint').toggleClass('d-none', !visible);
+    }
+    function showIdleExitCodeHint() {
+        exitArmSeq++;
+        lastArmedCode = '';
+        lastArmFailedCode = '';
+        lastArmConflictCode = '';
+        stopConflictRetry();
+        setCodeStatusHintVisible('exit', true);
+        $('#exit-code-arm-hint').removeClass('text-success text-danger d-none').addClass('text-muted')
+            .text(IDLE_EXIT_HINT);
     }
     function isEntrySuccessCountdown() {
         return !!(entryTimerInterval || $('#entry-result').is(':visible'));
@@ -523,15 +534,10 @@ $(document).ready(function() {
                 || $('#exit-code-arm-hint').hasClass('text-success')
                 || $('#exit-code-arm-hint').hasClass('text-danger'));
             if (hadArmUi || code.length === 0) {
-                stopConflictRetry();
                 if (lastArmedCode || hadArmUi) {
                     $.post(API.clearExit);
                 }
-                lastArmedCode = '';
-                lastArmFailedCode = '';
-                lastArmConflictCode = '';
-                $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
-                    .text(IDLE_EXIT_HINT);
+                showIdleExitCodeHint();
             }
             return;
         }
@@ -540,14 +546,18 @@ $(document).ready(function() {
         }
         if (armInFlight) return;
         armInFlight = true;
+        const seq = ++exitArmSeq;
         $.post(API.armExit, { code: code })
             .done(function(res) {
+                if (seq !== exitArmSeq) return;
+                const current = ($('#exit-code').val() || '').trim().toUpperCase();
+                if (current !== code) return;
                 if (res && res.success) {
                     stopConflictRetry();
                     lastArmedCode = code;
                     lastArmFailedCode = '';
                     lastArmConflictCode = '';
-                    $('#exit-code-arm-hint').removeClass('text-muted text-danger').addClass('text-success')
+                    $('#exit-code-arm-hint').removeClass('text-muted text-danger d-none').addClass('text-success')
                         .text('Đã nhận mã ' + code + (res.plate_number ? (' — BSX ' + res.plate_number) : ''));
                 } else if (res && res.conflict) {
                     markArmConflict((res && res.message) || 'Mã đang được tài khoản khác sử dụng — không nhận mã.');
@@ -555,13 +565,16 @@ $(document).ready(function() {
                     lastArmedCode = '';
                     lastArmFailedCode = '';
                     lastArmConflictCode = '';
-                    $('#exit-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
+                    $('#exit-code-arm-hint').removeClass('text-muted text-success d-none').addClass('text-danger')
                         .text(res.message || 'Vé tháng đã vô hiệu hóa — không cho quét xe ra.');
                 } else {
                     markArmFailed((res && res.message) || 'Không nhận được mã này');
                 }
             })
             .fail(function(xhr) {
+                if (seq !== exitArmSeq) return;
+                const current = ($('#exit-code').val() || '').trim().toUpperCase();
+                if (current !== code) return;
                 const body = (xhr && xhr.responseJSON) || {};
                 if (body.conflict || xhr.status === 409) {
                     markArmConflict(body.message || 'Mã đang được tài khoản khác sử dụng — không nhận mã.');
@@ -571,7 +584,7 @@ $(document).ready(function() {
                     lastArmedCode = '';
                     lastArmFailedCode = '';
                     lastArmConflictCode = '';
-                    $('#exit-code-arm-hint').removeClass('text-muted text-success').addClass('text-danger')
+                    $('#exit-code-arm-hint').removeClass('text-muted text-success d-none').addClass('text-danger')
                         .text(body.message || 'Vé tháng đã vô hiệu hóa — không cho quét xe ra.');
                     return;
                 }
@@ -607,14 +620,8 @@ $(document).ready(function() {
         $('#comp-status-badge').removeClass('bg-success bg-danger text-white').addClass('bg-warning text-dark').text('Đang chờ nhận diện xe ra...');
         $('#validation-buttons').hide();
         currentLogId = null;
-        lastArmedCode = '';
-        lastArmFailedCode = '';
-        lastArmConflictCode = '';
-        stopConflictRetry();
         $.post(API.clearExit);
-        setCodeStatusHintVisible('exit', true);
-        $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
-            .text(IDLE_EXIT_HINT);
+        showIdleExitCodeHint();
     }
 
     function autoApproveExit(logId) {
@@ -1195,6 +1202,7 @@ $(document).ready(function() {
                         }
                     }, 1000);
                 } else {
+                    showIdleExitCodeHint();
                     showNotificationModal(false, 'Đã Từ Chối Phương Tiện!', res.message);
                     resetExitAndComparison();
                 }
