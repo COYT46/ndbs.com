@@ -649,7 +649,18 @@ $(document).ready(function() {
         $('#exit-fee-text').text('');
     }
 
+    function setCodeStatusHintVisible(side, visible) {
+        $('#' + side + '-code-arm-hint').toggleClass('d-none', !visible);
+    }
+    function isEntrySuccessCountdown() {
+        return !!(entryTimerInterval || $('#entry-result').is(':visible'));
+    }
+    function isExitSuccessCountdown() {
+        return !!(exitTimerInterval || !$('#exit-auto-timer-wrap').hasClass('d-none'));
+    }
+
     function resetMonthlyLookupUi(kind, message) {
+        if (isEntrySuccessCountdown()) return;
         if (kind === 'idle') {
             $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
                 .text(message || 'Để trống nếu vé ngày.');
@@ -756,6 +767,7 @@ $(document).ready(function() {
     }
 
     function armExitCodeIfReady(forceRetry) {
+        if (isExitSuccessCountdown()) return;
         const code = ($('#exit-code').val() || '').trim().toUpperCase();
         if (code.length !== 6) {
             // Xóa/sửa còn dưới 6 ký tự → luôn tắt kích hoạt + reset hint (kể cả poll đang treo chữ xanh)
@@ -967,6 +979,7 @@ $(document).ready(function() {
         lastMonthlyFailed = '';
         setMonthlyCodeLocked(false);
         $('#entry-code').val('');
+        setCodeStatusHintVisible('entry', true);
         $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
             .text('Để trống nếu vé ngày.');
         $('#comp-in-reg-plate').text('-');
@@ -1029,6 +1042,7 @@ $(document).ready(function() {
         lastArmFailedCode = '';
         lastArmConflictCode = '';
         if (typeof stopConflictRetry === 'function') stopConflictRetry();
+        setCodeStatusHintVisible('exit', true);
         $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
             .text(opts.keepCode ? 'Nhập đủ 6 ký tự hoặc sửa mã rồi thử lại' : 'Nhập mã 6 ký tự để ĐT bắt đầu quét');
         manualConfirmHidden.exit = false;
@@ -1055,6 +1069,7 @@ $(document).ready(function() {
                 autoExitInProgress = false;
                 clearExitTimer();
                 $('#exit-auto-timer-wrap').addClass('d-none');
+                setCodeStatusHintVisible('exit', true);
                 $('#validation-buttons').show();
                 $('#comp-status-badge').removeClass('bg-success').addClass('bg-danger text-white')
                     .text('Tự động cho ra thất bại — xác nhận thủ công');
@@ -1064,6 +1079,7 @@ $(document).ready(function() {
                 autoExitInProgress = false;
                 clearExitTimer();
                 $('#exit-auto-timer-wrap').addClass('d-none');
+                setCodeStatusHintVisible('exit', true);
                 $('#validation-buttons').show();
                 const msg = (xhr.responseJSON && xhr.responseJSON.message) || 'Lỗi kết nối khi tự động cho ra.';
                 showNotificationModal(false, 'Lỗi tự động cho ra', msg);
@@ -1110,6 +1126,7 @@ $(document).ready(function() {
 
         $('#res-plate').text(plate || '');
         $('#res-code').text(code || '');
+        setCodeStatusHintVisible('entry', false);
         $('#entry-result').fadeIn();
         if (opts.pausePhone !== false) {
             $.post(API.scanCooldown, { seconds: 10 });
@@ -1137,7 +1154,9 @@ $(document).ready(function() {
         opts = opts || {};
         if (!alert) return;
         if (entryTimerInterval) clearInterval(entryTimerInterval);
+        entryTimerInterval = null;
         entryShowingResult = false;
+        setCodeStatusHintVisible('entry', true);
         $('#entry-result').hide();
         manualConfirmHidden.entry = true;
         $('#btn-manual-entry').hide();
@@ -1197,6 +1216,7 @@ $(document).ready(function() {
             let seconds = 10;
             $('#exit-auto-timer').text(seconds);
             $('#exit-auto-timer-wrap').removeClass('d-none');
+            setCodeStatusHintVisible('exit', false);
             showExitFee(data);
             $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
                 .text('Biển khớp — tự động cho ra sau ' + seconds + 's');
@@ -1224,6 +1244,7 @@ $(document).ready(function() {
             $('#exit-alert-icon').text('warning');
             $('#exit-message').text(data.message || 'Biển số không khớp');
             $('#exit-auto-timer-wrap').addClass('d-none');
+            setCodeStatusHintVisible('exit', true);
             hideExitFee();
             $('#comp-status-badge').removeClass('bg-warning bg-success text-dark').addClass('bg-danger text-white')
                 .text('BSX không trùng — cần xác nhận thủ công');
@@ -1291,10 +1312,12 @@ $(document).ready(function() {
                     currentMonthlyLogId = null;
                     setMonthlyCodeLocked(false);
                     $('#entry-code').val('');
+                    setCodeStatusHintVisible('entry', true);
                     $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
                         .text('Để trống nếu vé ngày.');
                     $('#entry-validation-buttons').hide();
                     $('#comp-in-reg-plate').text('-');
+                    setCodeStatusHintVisible('exit', true);
                     $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
                         .text('Nhập mã 6 ký tự để ĐT bắt đầu quét');
 
@@ -1399,8 +1422,10 @@ $(document).ready(function() {
                     lastArmFailedCode = '';
                     lastArmConflictCode = '';
                     stopConflictRetry();
-                    $('#exit-code-arm-hint').removeClass('text-muted text-danger').addClass('text-success')
-                        .text('Đã kích hoạt — mã ' + lastArmedCode);
+                    if (!isExitSuccessCountdown()) {
+                        $('#exit-code-arm-hint').removeClass('text-muted text-danger').addClass('text-success')
+                            .text('Đã kích hoạt — mã ' + lastArmedCode);
+                    }
                 } else if (!codeNow) {
                     // User đã xóa mã trên ô nhập — tắt kích hoạt + về hint mặc định (không để poll kéo lại chữ xanh)
                     if (lastArmedCode || lastArmConflictCode || lastArmFailedCode
@@ -1670,6 +1695,7 @@ $(document).ready(function() {
                     let seconds = 10;
                     $('#exit-auto-timer').text(seconds);
                     $('#exit-auto-timer-wrap').removeClass('d-none');
+                    setCodeStatusHintVisible('exit', false);
                     $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
                         .text('Đã cho ra thành công');
                     if (exitTimerInterval) clearInterval(exitTimerInterval);

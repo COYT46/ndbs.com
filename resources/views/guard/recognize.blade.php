@@ -312,7 +312,18 @@ $(document).ready(function() {
         $('#exit-fee-wrap').addClass('d-none');
         $('#exit-fee-text').text('');
     }
+    function setCodeStatusHintVisible(side, visible) {
+        $('#' + side + '-code-arm-hint').toggleClass('d-none', !visible);
+    }
+    function isEntrySuccessCountdown() {
+        return !!(entryTimerInterval || $('#entry-result').is(':visible'));
+    }
+    function isExitSuccessCountdown() {
+        return !!(exitTimerInterval || !$('#exit-auto-timer-wrap').hasClass('d-none'));
+    }
+
     function resetMonthlyLookupUi(kind, message) {
+        if (isEntrySuccessCountdown()) return;
         if (kind === 'idle') {
             $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
                 .text(message || 'Để trống nếu vé ngày.');
@@ -442,6 +453,7 @@ $(document).ready(function() {
         lastLookupFailed = '';
         setMonthlyCodeLocked(false);
         $('#entry-code').val('');
+        setCodeStatusHintVisible('entry', true);
         $('#entry-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
             .text('Để trống nếu vé ngày.');
         $('#comp-in-reg-plate').text('-');
@@ -504,6 +516,7 @@ $(document).ready(function() {
     }
 
     function armExitCodeIfReady(forceRetry) {
+        if (isExitSuccessCountdown()) return;
         const code = ($('#exit-code').val() || '').trim().toUpperCase();
         if (code.length !== 6) {
             const hadArmUi = !!(lastArmedCode || lastArmFailedCode || lastArmConflictCode
@@ -599,6 +612,7 @@ $(document).ready(function() {
         lastArmConflictCode = '';
         stopConflictRetry();
         $.post(API.clearExit);
+        setCodeStatusHintVisible('exit', true);
         $('#exit-code-arm-hint').removeClass('text-success text-danger').addClass('text-muted')
             .text(IDLE_EXIT_HINT);
     }
@@ -615,6 +629,7 @@ $(document).ready(function() {
                 autoExitInProgress = false;
                 clearExitTimer();
                 $('#exit-auto-timer-wrap').addClass('d-none');
+                setCodeStatusHintVisible('exit', true);
                 $('#validation-buttons').show();
                 $('#comp-status-badge').removeClass('bg-success').addClass('bg-danger text-white')
                     .text('Tự động cho ra thất bại — xác nhận thủ công');
@@ -624,6 +639,7 @@ $(document).ready(function() {
                 autoExitInProgress = false;
                 clearExitTimer();
                 $('#exit-auto-timer-wrap').addClass('d-none');
+                setCodeStatusHintVisible('exit', true);
                 $('#validation-buttons').show();
                 const msg = (xhr.responseJSON && xhr.responseJSON.message) || 'Lỗi kết nối khi tự động cho ra.';
                 showNotificationModal(false, 'Lỗi tự động cho ra', msg);
@@ -649,6 +665,7 @@ $(document).ready(function() {
             $('#comp-in-img').attr('src', imageUrl).show();
         }
         $('#comp-in-status-badge').removeClass('bg-danger text-white').addClass('bg-light text-primary').text('Xe vào OK');
+        setCodeStatusHintVisible('entry', false);
         $('#entry-result').fadeIn();
         setMonthlyCodeLocked(true);
         if (entryTimerInterval) clearInterval(entryTimerInterval);
@@ -674,6 +691,8 @@ $(document).ready(function() {
     function showAlreadyInsideAlert(alert) {
         if (!alert) return;
         if (entryTimerInterval) clearInterval(entryTimerInterval);
+        entryTimerInterval = null;
+        setCodeStatusHintVisible('entry', true);
         $('#entry-result').hide();
         if (alert.entry_image) {
             $('#entry-placeholder').hide();
@@ -729,6 +748,7 @@ $(document).ready(function() {
             let seconds = 10;
             $('#exit-auto-timer').text(seconds);
             $('#exit-auto-timer-wrap').removeClass('d-none');
+            setCodeStatusHintVisible('exit', false);
             showExitFee(data);
             $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
                 .text('Biển khớp — tự động cho ra sau ' + seconds + 's');
@@ -758,6 +778,7 @@ $(document).ready(function() {
                 '<i class="material-icons-outlined align-middle me-1">warning</i> ' + (data.message || 'Biển số không khớp')
             );
             $('#exit-auto-timer-wrap').addClass('d-none');
+            setCodeStatusHintVisible('exit', true);
             hideExitFee();
             $('#comp-status-badge').removeClass('bg-warning bg-success text-dark').addClass('bg-danger text-white')
                 .text('BSX không trùng');
@@ -812,6 +833,7 @@ $(document).ready(function() {
         const btn = $('#btn-entry-recognize');
         btn.prop('disabled', true).html(entryBtnHtml(true));
         $('#entry-result, #entry-error').hide();
+        setCodeStatusHintVisible('entry', true);
         $('#entry-validation-buttons').hide();
         hideManualConfirm('entry');
         if (entryTimerInterval) clearInterval(entryTimerInterval);
@@ -1158,6 +1180,7 @@ $(document).ready(function() {
                     let seconds = 10;
                     $('#exit-auto-timer').text(seconds);
                     $('#exit-auto-timer-wrap').removeClass('d-none');
+                    setCodeStatusHintVisible('exit', false);
                     $('#comp-status-badge').removeClass('bg-warning bg-danger text-dark').addClass('bg-success text-white')
                         .text('Đã cho ra thành công');
                     if (exitTimerInterval) clearInterval(exitTimerInterval);
