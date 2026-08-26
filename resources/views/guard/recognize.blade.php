@@ -1173,6 +1173,8 @@ $(document).ready(function() {
             if (res.success) {
                 if (isValid) {
                     $('#validation-buttons').hide();
+                    exitLocked = true;
+                    setExitControlsEnabled(false);
                     const alertBox = $('#exit-alert-box');
                     alertBox.removeClass('alert-danger alert-info').addClass('alert-success');
                     $('#exit-message').html('<i class="material-icons-outlined align-middle me-1">check_circle</i> Đã cho phép xe ra!');
