@@ -45,7 +45,10 @@ class ParkingFee
             ];
         }
 
-        $calc = static::calcDailyFee($log->entry_time, $exitTime);
+        $rate = $log->hourly_rate !== null
+            ? (int) $log->hourly_rate
+            : Setting::dailyPricePerHour();
+        $calc = static::calcDailyFee($log->entry_time, $exitTime, $rate);
         $log->fee = $calc['fee'];
         $log->hourly_rate = $calc['hourly_rate'];
         $calc['ticket_type'] = 'daily';

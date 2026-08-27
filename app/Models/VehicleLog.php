@@ -51,6 +51,18 @@ class VehicleLog extends Model
         return $this->belongsTo(MonthlyTicket::class, 'monthly_ticket_id');
     }
 
+    protected static function booted()
+    {
+        static::creating(function (VehicleLog $log) {
+            if (($log->ticket_type ?? 'daily') === 'monthly') {
+                return;
+            }
+            if ($log->hourly_rate === null) {
+                $log->hourly_rate = Setting::dailyPricePerHour();
+            }
+        });
+    }
+
     public function isMonthly(): bool
     {
         return ($this->ticket_type ?? 'daily') === 'monthly';

@@ -43,7 +43,21 @@ class ManagerController extends Controller
             'monthly_price_per_month.min' => 'Giá vé tháng phải lớn hơn 0.',
         ]);
 
-        Setting::setValue('daily_price_per_hour', (int) $request->daily_price_per_hour);
+        $oldDaily = Setting::dailyPricePerHour();
+        $newDaily = (int) $request->daily_price_per_hour;
+
+        // Xe đã vào trước khi đổi giá: khóa đơn giá cũ, không áp giá mới khi ra.
+        if ($oldDaily !== $newDaily) {
+            VehicleLog::query()
+                ->where('status', 'in')
+                ->where(function ($q) {
+                    $q->where('ticket_type', 'daily')->orWhereNull('ticket_type');
+                })
+                ->whereNull('hourly_rate')
+                ->update(['hourly_rate' => $oldDaily]);
+        }
+
+        Setting::setValue('daily_price_per_hour', $newDaily);
         Setting::setValue('monthly_price_per_month', (int) $request->monthly_price_per_month);
 
         return redirect()->back()->with('success', 'Đã lưu cài đặt giá vé.');
