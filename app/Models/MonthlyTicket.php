@@ -32,6 +32,16 @@ class MonthlyTicket extends Model
         return $this->hasMany(VehicleLog::class, 'monthly_ticket_id');
     }
 
+    public function getPlateNumberAttribute($value)
+    {
+        return normalize_plate($value);
+    }
+
+    public function setPlateNumberAttribute($value)
+    {
+        $this->attributes['plate_number'] = normalize_plate($value);
+    }
+
     public function scopeNotDeleted($query)
     {
         return $query->where('deleted', 0);

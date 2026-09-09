@@ -946,7 +946,7 @@ class ApiController extends Controller
 
             return response()->json([
                 'success' => true,
-                'plate_number' => strtoupper($aiResult['plate']),
+                'plate_number' => normalize_plate($aiResult['plate']),
             ]);
         } catch (\Exception $e) {
             $msg = $e->getMessage();
@@ -1052,7 +1052,7 @@ class ApiController extends Controller
                 ]);
             }
 
-            $plate = strtoupper($aiResult['plate']);
+            $plate = normalize_plate($aiResult['plate']);
             $cleanPlate = preg_replace('/[^A-Z0-9]/i', '', $plate);
 
             // Xe vẫn còn trong bãi (chưa ra) → không cho nhận diện vào lần nữa
@@ -1250,7 +1250,7 @@ class ApiController extends Controller
                 ]);
             }
 
-            $exitPlate = strtoupper($aiResult['plate']);
+            $exitPlate = normalize_plate($aiResult['plate']);
             $isMatch = $this->platesMatch($log->plate_number, $exitPlate);
 
             if ($isMatch) {

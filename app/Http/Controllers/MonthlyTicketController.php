@@ -18,7 +18,7 @@ class MonthlyTicketController extends Controller
 
     private function normalizePlate(?string $plate): string
     {
-        return strtoupper(trim((string) $plate));
+        return normalize_plate($plate);
     }
 
     private function plateTaken(?string $plate, ?int $ignoreId = null): bool

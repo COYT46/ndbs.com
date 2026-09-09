@@ -347,7 +347,7 @@
                         <label class="form-label fw-semibold">BSX</label>
                         <input type="text" class="form-control text-uppercase" name="plate_number"
                             value="{{ old('_edit_ticket_id') || old('_renew_ticket_id') ? '' : old('plate_number') }}"
-                            placeholder="12A-34567" required>
+                            placeholder="12A34567" required>
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Thời hạn</label>

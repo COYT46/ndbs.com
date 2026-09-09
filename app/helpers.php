@@ -1,5 +1,20 @@
 <?php
 
+if (! function_exists('normalize_plate')) {
+    function normalize_plate(?string $plate): string
+    {
+        $raw = trim((string) $plate);
+        if ($raw === '') {
+            return '';
+        }
+        if (mb_strtolower($raw) === 'không thể nhận diện') {
+            return $raw;
+        }
+
+        return strtoupper((string) preg_replace('/[^A-Z0-9]/i', '', $raw));
+    }
+}
+
 if (! function_exists('remove_protocol')) {
     function remove_protocol($url) {
         return str_replace(['http://', 'https://'], '', $url);

@@ -46,6 +46,26 @@ class VehicleLog extends Model
         return $this->belongsTo(User::class, 'guard_out_id');
     }
 
+    public function getPlateNumberAttribute($value)
+    {
+        return normalize_plate($value);
+    }
+
+    public function setPlateNumberAttribute($value)
+    {
+        $this->attributes['plate_number'] = normalize_plate($value);
+    }
+
+    public function getExitPlateNumberAttribute($value)
+    {
+        return $value === null ? null : normalize_plate($value);
+    }
+
+    public function setExitPlateNumberAttribute($value)
+    {
+        $this->attributes['exit_plate_number'] = $value === null ? null : normalize_plate($value);
+    }
+
     public function monthlyTicket()
     {
         return $this->belongsTo(MonthlyTicket::class, 'monthly_ticket_id');
